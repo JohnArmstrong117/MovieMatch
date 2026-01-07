@@ -1,10 +1,34 @@
-import { StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
+import { useState } from 'react';
+import { StyleSheet, TextInput, TouchableOpacity, View, Alert, ActivityIndicator } from 'react-native';
 import { Link } from 'expo-router';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { useAuth } from '@/contexts/auth-context';
 
 export default function ForgotPasswordScreen() {
+  const [email, setEmail] = useState('');
+  const [loading, setLoading] = useState(false);
+  const { resetPassword } = useAuth();
+
+  const handleResetPassword = async () => {
+    if (!email) {
+      Alert.alert('Error', 'Please enter your email address');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await resetPassword(email);
+      Alert.alert('Success', 'Password reset email sent! Please check your inbox.');
+      setEmail('');
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to send reset email');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <ThemedView style={styles.container}>
       <ThemedView style={styles.content}>
@@ -23,10 +47,21 @@ export default function ForgotPasswordScreen() {
             keyboardType="email-address"
             autoCapitalize="none"
             autoComplete="email"
+            value={email}
+            onChangeText={setEmail}
+            editable={!loading}
           />
 
-          <TouchableOpacity style={styles.button}>
-            <ThemedText style={styles.buttonText}>Send Reset Link</ThemedText>
+          <TouchableOpacity 
+            style={[styles.button, loading && styles.buttonDisabled]} 
+            onPress={handleResetPassword}
+            disabled={loading}
+          >
+            {loading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <ThemedText style={styles.buttonText}>Send Reset Link</ThemedText>
+            )}
           </TouchableOpacity>
         </View>
 
@@ -88,6 +123,9 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  buttonDisabled: {
+    opacity: 0.6,
   },
   footer: {
     flexDirection: 'row',

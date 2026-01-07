@@ -1,10 +1,35 @@
-import { StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
-import { Link } from 'expo-router';
+import { useState } from 'react';
+import { StyleSheet, TextInput, TouchableOpacity, View, Alert, ActivityIndicator } from 'react-native';
+import { Link, useRouter } from 'expo-router';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { useAuth } from '@/contexts/auth-context';
 
 export default function LoginScreen() {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const { signIn } = useAuth();
+  const router = useRouter();
+
+  const handleLogin = async () => {
+    if (!email || !password) {
+      Alert.alert('Error', 'Please fill in all fields');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await signIn(email, password);
+      router.replace('/(authenticated)/(tabs)');
+    } catch (error: any) {
+      Alert.alert('Login Failed', error.message || 'An error occurred during login');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <ThemedView style={styles.container}>
       <ThemedView style={styles.content}>
@@ -23,6 +48,9 @@ export default function LoginScreen() {
             keyboardType="email-address"
             autoCapitalize="none"
             autoComplete="email"
+            value={email}
+            onChangeText={setEmail}
+            editable={!loading}
           />
           <TextInput
             style={styles.input}
@@ -31,10 +59,21 @@ export default function LoginScreen() {
             secureTextEntry
             autoCapitalize="none"
             autoComplete="password"
+            value={password}
+            onChangeText={setPassword}
+            editable={!loading}
           />
 
-          <TouchableOpacity style={styles.button}>
-            <ThemedText style={styles.buttonText}>Login</ThemedText>
+          <TouchableOpacity 
+            style={[styles.button, loading && styles.buttonDisabled]} 
+            onPress={handleLogin}
+            disabled={loading}
+          >
+            {loading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <ThemedText style={styles.buttonText}>Login</ThemedText>
+            )}
           </TouchableOpacity>
 
           <Link href="/(auth)/forgot-password" asChild>
@@ -106,6 +145,9 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  buttonDisabled: {
+    opacity: 0.6,
   },
   forgotPassword: {
     textAlign: 'center',

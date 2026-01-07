@@ -1,10 +1,48 @@
-import { StyleSheet, TextInput, TouchableOpacity, View } from 'react-native';
-import { Link } from 'expo-router';
+import { useState } from 'react';
+import { StyleSheet, TextInput, TouchableOpacity, View, Alert, ActivityIndicator } from 'react-native';
+import { Link, useRouter } from 'expo-router';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
+import { useAuth } from '@/contexts/auth-context';
 
 export default function SignUpScreen() {
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const { signUp } = useAuth();
+  const router = useRouter();
+
+  const handleSignUp = async () => {
+    if (!name || !email || !password || !confirmPassword) {
+      Alert.alert('Error', 'Please fill in all fields');
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      Alert.alert('Error', 'Passwords do not match');
+      return;
+    }
+
+    if (password.length < 6) {
+      Alert.alert('Error', 'Password must be at least 6 characters');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await signUp(email, password, name);
+      Alert.alert('Success', 'Account created! Please check your email to verify your account.');
+      router.replace('/(auth)/login');
+    } catch (error: any) {
+      Alert.alert('Sign Up Failed', error.message || 'An error occurred during sign up');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <ThemedView style={styles.container}>
       <ThemedView style={styles.content}>
@@ -22,6 +60,9 @@ export default function SignUpScreen() {
             placeholderTextColor="#999"
             autoCapitalize="words"
             autoComplete="name"
+            value={name}
+            onChangeText={setName}
+            editable={!loading}
           />
           <TextInput
             style={styles.input}
@@ -30,6 +71,9 @@ export default function SignUpScreen() {
             keyboardType="email-address"
             autoCapitalize="none"
             autoComplete="email"
+            value={email}
+            onChangeText={setEmail}
+            editable={!loading}
           />
           <TextInput
             style={styles.input}
@@ -38,6 +82,9 @@ export default function SignUpScreen() {
             secureTextEntry
             autoCapitalize="none"
             autoComplete="password-new"
+            value={password}
+            onChangeText={setPassword}
+            editable={!loading}
           />
           <TextInput
             style={styles.input}
@@ -46,10 +93,21 @@ export default function SignUpScreen() {
             secureTextEntry
             autoCapitalize="none"
             autoComplete="password-new"
+            value={confirmPassword}
+            onChangeText={setConfirmPassword}
+            editable={!loading}
           />
 
-          <TouchableOpacity style={styles.button}>
-            <ThemedText style={styles.buttonText}>Sign Up</ThemedText>
+          <TouchableOpacity 
+            style={[styles.button, loading && styles.buttonDisabled]} 
+            onPress={handleSignUp}
+            disabled={loading}
+          >
+            {loading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <ThemedText style={styles.buttonText}>Sign Up</ThemedText>
+            )}
           </TouchableOpacity>
         </View>
 
@@ -112,6 +170,9 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  buttonDisabled: {
+    opacity: 0.6,
   },
   footer: {
     flexDirection: 'row',
