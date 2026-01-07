@@ -1,13 +1,12 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import type { User as SupabaseUser, Session } from '@supabase/supabase-js';
+import { supabase } from '@/lib/supabase';
 
-type User = {
-  id: string;
-  email?: string;
-  // Add other user properties as needed
-} | null;
+type User = SupabaseUser | null;
 
 type AuthContextType = {
   user: User;
+  session: Session | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string, name?: string) => Promise<void>;
@@ -19,26 +18,37 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User>(null);
+  const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     // Check for existing session
-    // TODO: Replace with Supabase auth check
-    // Example: const { data: { session } } = await supabase.auth.getSession();
     checkAuthState();
+
+    // Listen for auth state changes
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      setUser(session?.user ?? null);
+      setLoading(false);
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
   const checkAuthState = async () => {
     try {
-      // TODO: Replace with Supabase auth state check
-      // const { data: { session } } = await supabase.auth.getSession();
-      // setUser(session?.user ?? null);
+      const { data: { session }, error } = await supabase.auth.getSession();
+      if (error) throw error;
       
-      // Placeholder: Check for stored auth token or session
-      const storedUser = null; // Replace with actual storage check
-      setUser(storedUser);
+      setSession(session);
+      setUser(session?.user ?? null);
     } catch (error) {
       console.error('Error checking auth state:', error);
+      setSession(null);
       setUser(null);
     } finally {
       setLoading(false);
@@ -46,76 +56,55 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signIn = async (email: string, password: string) => {
-    try {
-      // TODO: Replace with Supabase sign in
-      // const { data, error } = await supabase.auth.signInWithPassword({
-      //   email,
-      //   password,
-      // });
-      // if (error) throw error;
-      // setUser(data.user);
-      
-      // Placeholder implementation
-      console.log('Sign in:', email);
-      throw new Error('Supabase auth not yet configured');
-    } catch (error) {
-      console.error('Sign in error:', error);
-      throw error;
-    }
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+    
+    if (error) throw error;
+    
+    setSession(data.session);
+    setUser(data.user);
   };
 
   const signUp = async (email: string, password: string, name?: string) => {
-    try {
-      // TODO: Replace with Supabase sign up
-      // const { data, error } = await supabase.auth.signUp({
-      //   email,
-      //   password,
-      //   options: {
-      //     data: { name },
-      //   },
-      // });
-      // if (error) throw error;
-      // setUser(data.user);
-      
-      // Placeholder implementation
-      console.log('Sign up:', email, name);
-      throw new Error('Supabase auth not yet configured');
-    } catch (error) {
-      console.error('Sign up error:', error);
-      throw error;
-    }
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          name: name || '',
+        },
+      },
+    });
+    
+    if (error) throw error;
+    
+    setSession(data.session);
+    setUser(data.user);
   };
 
   const signOut = async () => {
-    try {
-      // TODO: Replace with Supabase sign out
-      // await supabase.auth.signOut();
-      setUser(null);
-    } catch (error) {
-      console.error('Sign out error:', error);
-      throw error;
-    }
+    const { error } = await supabase.auth.signOut();
+    if (error) throw error;
+    
+    setSession(null);
+    setUser(null);
   };
 
   const resetPassword = async (email: string) => {
-    try {
-      // TODO: Replace with Supabase password reset
-      // const { error } = await supabase.auth.resetPasswordForEmail(email);
-      // if (error) throw error;
-      
-      // Placeholder implementation
-      console.log('Reset password:', email);
-      throw new Error('Supabase auth not yet configured');
-    } catch (error) {
-      console.error('Reset password error:', error);
-      throw error;
-    }
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: 'exp://127.0.0.1:8081/--/(auth)/reset-password',
+    });
+    
+    if (error) throw error;
   };
 
   return (
     <AuthContext.Provider
       value={{
         user,
+        session,
         loading,
         signIn,
         signUp,
