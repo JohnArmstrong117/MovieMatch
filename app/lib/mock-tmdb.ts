@@ -131,6 +131,9 @@ const mockTV: MockTitle[] = [
   },
 ];
 
+// Note: In a real implementation, the TMDB API would handle pagination
+// and prevent duplicates. This mock shuffles titles for variety.
+
 export const mockTMDB = {
   /**
    * Get a batch of titles based on filters
@@ -163,13 +166,25 @@ export const mockTMDB = {
       );
     }
 
-    // Limit results
+    // Limit results and paginate
     const limit = options.limit || 20;
     const page = options.page || 1;
     const startIndex = (page - 1) * limit;
     const endIndex = startIndex + limit;
 
-    return titles.slice(startIndex, endIndex);
+    // Shuffle for variety on each call (in real app, API would handle pagination properly)
+    // Use a consistent seed based on page for pseudo-randomness
+    const seededShuffle = (array: MockTitle[], seed: number) => {
+      const shuffled = [...array];
+      for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor((seed + i) % (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+      }
+      return shuffled;
+    };
+
+    const shuffled = seededShuffle(titles, page * 1000);
+    return shuffled.slice(startIndex, endIndex);
   },
 
   /**

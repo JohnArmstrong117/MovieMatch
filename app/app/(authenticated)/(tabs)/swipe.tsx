@@ -7,7 +7,7 @@ import { mockTMDB, type MockTitle } from '@/lib/mock-tmdb';
 import { SwipeCard } from '@/components/swipe-card';
 import { ThemedView } from '@/components/themed-view';
 import { ThemedText } from '@/components/themed-text';
-import { genreHelpers, streamingServiceHelpers } from '@/lib/db-helpers';
+import { genreHelpers, streamingServiceHelpers, titleHelpers } from '@/lib/db-helpers';
 
 export default function SwipeScreen() {
   const { user } = useAuth();
@@ -42,9 +42,23 @@ export default function SwipeScreen() {
       }
 
       setHasPreferences(true);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error checking preferences:', error);
-      Alert.alert('Error', 'Failed to load preferences');
+      
+      // Handle JWT clock sync errors gracefully
+      if (error?.code === 'PGRST303' || error?.message?.includes('JWT issued at future')) {
+        console.warn('JWT clock sync issue - will retry on next check');
+        // Retry after a short delay
+        setTimeout(() => {
+          checkPreferences();
+        }, 2000);
+        return;
+      }
+      
+      // Only show alert for non-clock-sync errors
+      if (error?.code !== 'PGRST303') {
+        Alert.alert('Error', 'Failed to load preferences');
+      }
     }
   };
 
@@ -70,17 +84,23 @@ export default function SwipeScreen() {
       });
 
       // Filter out titles user has already swiped on
-      const swipedTitles = await Promise.all(
+      const swipedChecks = await Promise.all(
         fetchedTitles.map(title =>
-          swipeHelpers.hasSwiped(user.id, title.id, title.type)
+          swipeHelpers.hasSwiped(user.id, title.id, title.type).catch(() => false)
         )
       );
 
       const unswipedTitles = fetchedTitles.filter(
-        (_, index) => !swipedTitles[index]
+        (_, index) => !swipedChecks[index]
       );
 
-      setTitles(unswipedTitles);
+      // Remove duplicates by creating a unique key from type and id
+      const uniqueTitles = unswipedTitles.filter(
+        (title, index, self) =>
+          index === self.findIndex(t => t.id === title.id && t.type === title.type)
+      );
+
+      setTitles(uniqueTitles);
       setCurrentIndex(0);
     } catch (error) {
       console.error('Error loading titles:', error);
@@ -95,6 +115,25 @@ export default function SwipeScreen() {
 
     const title = titles[currentIndex];
     try {
+      // Cache title data first
+      await titleHelpers.upsertTitle({
+        tmdb_id: title.id,
+        type: title.type,
+        title: title.title,
+        original_title: title.original_title,
+        poster_path: title.poster_path,
+        backdrop_path: title.backdrop_path,
+        overview: title.overview,
+        release_date: title.release_date,
+        first_air_date: title.first_air_date,
+        popularity: title.popularity,
+        vote_average: title.vote_average,
+        vote_count: title.vote_count,
+        adult: false,
+        metadata: { genre_ids: title.genre_ids },
+      });
+
+      // Save swipe
       await swipeHelpers.createSwipe({
         user_id: user.id,
         tmdb_id: title.id,
@@ -103,10 +142,11 @@ export default function SwipeScreen() {
       });
 
       // Move to next card
-      setCurrentIndex(prev => prev + 1);
+      const nextIndex = currentIndex + 1;
+      setCurrentIndex(nextIndex);
 
-      // Load more if running low
-      if (currentIndex >= titles.length - 3) {
+      // Load more if running low (using nextIndex to check future state)
+      if (nextIndex >= titles.length - 2 && nextIndex < titles.length) {
         loadMoreTitles();
       }
     } catch (error) {
@@ -120,6 +160,25 @@ export default function SwipeScreen() {
 
     const title = titles[currentIndex];
     try {
+      // Cache title data first (even for passes, in case they like it later)
+      await titleHelpers.upsertTitle({
+        tmdb_id: title.id,
+        type: title.type,
+        title: title.title,
+        original_title: title.original_title,
+        poster_path: title.poster_path,
+        backdrop_path: title.backdrop_path,
+        overview: title.overview,
+        release_date: title.release_date,
+        first_air_date: title.first_air_date,
+        popularity: title.popularity,
+        vote_average: title.vote_average,
+        vote_count: title.vote_count,
+        adult: false,
+        metadata: { genre_ids: title.genre_ids },
+      });
+
+      // Save swipe
       await swipeHelpers.createSwipe({
         user_id: user.id,
         tmdb_id: title.id,
@@ -128,10 +187,11 @@ export default function SwipeScreen() {
       });
 
       // Move to next card
-      setCurrentIndex(prev => prev + 1);
+      const nextIndex = currentIndex + 1;
+      setCurrentIndex(nextIndex);
 
-      // Load more if running low
-      if (currentIndex >= titles.length - 3) {
+      // Load more if running low (using nextIndex to check future state)
+      if (nextIndex >= titles.length - 2 && nextIndex < titles.length) {
         loadMoreTitles();
       }
     } catch (error) {
@@ -160,17 +220,31 @@ export default function SwipeScreen() {
       });
 
       // Filter out already swiped titles
-      const swipedTitles = await Promise.all(
+      const swipedChecks = await Promise.all(
         fetchedTitles.map(title =>
-          swipeHelpers.hasSwiped(user.id, title.id, title.type)
+          swipeHelpers.hasSwiped(user.id, title.id, title.type).catch(() => false)
         )
       );
 
       const unswipedTitles = fetchedTitles.filter(
-        (_, index) => !swipedTitles[index]
+        (_, index) => !swipedChecks[index]
       );
 
-      setTitles(prev => [...prev, ...unswipedTitles]);
+      // Remove duplicates - check both swiped titles and existing titles array
+      const existingIds = new Set(titles.map(t => `${t.type}-${t.id}`));
+      const newUniqueTitles = unswipedTitles.filter(
+        title => !existingIds.has(`${title.type}-${title.id}`)
+      );
+
+      // Also remove duplicates within the new batch
+      const uniqueNewTitles = newUniqueTitles.filter(
+        (title, index, self) =>
+          index === self.findIndex(t => t.id === title.id && t.type === title.type)
+      );
+
+      if (uniqueNewTitles.length > 0) {
+        setTitles(prev => [...prev, ...uniqueNewTitles]);
+      }
     } catch (error) {
       console.error('Error loading more titles:', error);
     }
@@ -223,7 +297,7 @@ export default function SwipeScreen() {
     .reverse()
     .map((title, index) => (
       <SwipeCard
-        key={title.id}
+        key={`${title.type}-${title.id}-${currentIndex + index}`}
         title={title}
         onSwipeLeft={handleSwipeLeft}
         onSwipeRight={handleSwipeRight}

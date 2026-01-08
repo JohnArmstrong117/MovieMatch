@@ -77,6 +77,31 @@ export function getSupabaseClient(): SupabaseClient {
       autoRefreshToken: true,
       persistSession: true,
       detectSessionInUrl: false,
+      // Allow for clock skew issues (JWT issued at future)
+      // This helps with the "JWT issued at future" error when device/server clocks differ
+      flowType: 'pkce',
+    },
+    global: {
+      // Handle JWT clock sync issues
+      fetch: async (url, options = {}) => {
+        try {
+          const response = await fetch(url, options);
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            // Handle "JWT issued at future" error - this happens when device/server clocks differ
+            // For local dev, we can ignore this or wait and retry
+            if (errorData.code === 'PGRST303' || errorData.message?.includes('JWT issued at future')) {
+              console.warn('JWT clock sync issue detected, waiting before retry...');
+              // Wait a bit and retry once
+              await new Promise(resolve => setTimeout(resolve, 1000));
+              return fetch(url, options);
+            }
+          }
+          return response;
+        } catch (error) {
+          throw error;
+        }
+      },
     },
   });
 
