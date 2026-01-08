@@ -1,13 +1,62 @@
 import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
+import { Platform, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { HelloWave } from '@/components/hello-wave';
 import ParallaxScrollView from '@/components/parallax-scroll-view';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Link } from 'expo-router';
+import { Link, useRouter } from 'expo-router';
+import { useAuth } from '@/contexts/auth-context';
+import { supabase } from '@/lib/supabase';
 
 export default function HomeScreen() {
+  const { user, session, signOut } = useAuth();
+  const router = useRouter();
+
+  const handleSignOut = async () => {
+    try {
+      await signOut();
+      router.replace('/(auth)/login');
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Failed to sign out');
+    }
+  };
+
+  const checkStoredSession = async () => {
+    try {
+      const keys = await AsyncStorage.getAllKeys();
+      const supabaseKeys = keys.filter(key => key.includes('supabase'));
+      const sessionData = await AsyncStorage.getItem('supabase.auth.token');
+      
+      Alert.alert(
+        'Stored Session Info',
+        `Supabase keys found: ${supabaseKeys.length}\n` +
+        `Session data: ${sessionData ? 'Present' : 'Not found'}\n` +
+        `Keys: ${supabaseKeys.join(', ')}`
+      );
+    } catch (error: any) {
+      Alert.alert('Error', error.message);
+    }
+  };
+
+  const testPersistence = async () => {
+    try {
+      // Get current session
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
+      
+      Alert.alert(
+        'Session Persistence Test',
+        `Current session: ${currentSession ? 'Active' : 'None'}\n` +
+        `User ID: ${currentSession?.user?.id || 'N/A'}\n` +
+        `Email: ${currentSession?.user?.email || 'N/A'}\n` +
+        `Expires: ${currentSession?.expires_at ? new Date(currentSession.expires_at * 1000).toLocaleString() : 'N/A'}`
+      );
+    } catch (error: any) {
+      Alert.alert('Error', error.message);
+    }
+  };
+
   return (
     <ParallaxScrollView
       headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
@@ -21,57 +70,55 @@ export default function HomeScreen() {
         <ThemedText type="title">Welcome!</ThemedText>
         <HelloWave />
       </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({
-              ios: 'cmd + d',
-              android: 'cmd + m',
-              web: 'F12',
-            })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <Link href="/modal">
-          <Link.Trigger>
-            <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-          </Link.Trigger>
-          <Link.Preview />
-          <Link.Menu>
-            <Link.MenuAction title="Action" icon="cube" onPress={() => alert('Action pressed')} />
-            <Link.MenuAction
-              title="Share"
-              icon="square.and.arrow.up"
-              onPress={() => alert('Share pressed')}
-            />
-            <Link.Menu title="More" icon="ellipsis">
-              <Link.MenuAction
-                title="Delete"
-                icon="trash"
-                destructive
-                onPress={() => alert('Delete pressed')}
-              />
-            </Link.Menu>
-          </Link.Menu>
-        </Link>
 
-        <ThemedText>
-          {`Tap the Explore tab to learn more about what's included in this starter app.`}
+      {/* Auth Debug Info */}
+      <ThemedView style={styles.debugContainer}>
+        <ThemedText type="subtitle">Auth Status</ThemedText>
+        <ThemedText style={styles.debugText}>
+          Logged in: {user ? 'Yes' : 'No'}
         </ThemedText>
+        {user && (
+          <>
+            <ThemedText style={styles.debugText}>
+              Email: {user.email || 'N/A'}
+            </ThemedText>
+            <ThemedText style={styles.debugText}>
+              User ID: {user.id}
+            </ThemedText>
+            <ThemedText style={styles.debugText}>
+              Session: {session ? 'Active' : 'None'}
+            </ThemedText>
+          </>
+        )}
       </ThemedView>
+
+      {/* Test Buttons */}
+      <ThemedView style={styles.testContainer}>
+        <ThemedText type="subtitle">Test Auth & Persistence</ThemedText>
+        
+        <TouchableOpacity style={styles.testButton} onPress={testPersistence}>
+          <ThemedText style={styles.buttonText}>Test Session Persistence</ThemedText>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.testButton} onPress={checkStoredSession}>
+          <ThemedText style={styles.buttonText}>Check Stored Session</ThemedText>
+        </TouchableOpacity>
+
+        {user && (
+          <TouchableOpacity style={[styles.testButton, styles.signOutButton]} onPress={handleSignOut}>
+            <ThemedText style={styles.buttonText}>Sign Out</ThemedText>
+          </TouchableOpacity>
+        )}
+      </ThemedView>
+
       <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
+        <ThemedText type="subtitle">Testing Instructions</ThemedText>
         <ThemedText>
-          {`When you're ready, run `}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
+          1. Sign in with your account{'\n'}
+          2. Check session persistence - should show active session{'\n'}
+          3. Close and restart the app{'\n'}
+          4. You should still be logged in (persistence test){'\n'}
+          5. Sign out to test the full flow
         </ThemedText>
       </ThemedView>
     </ParallaxScrollView>
@@ -87,6 +134,39 @@ const styles = StyleSheet.create({
   stepContainer: {
     gap: 8,
     marginBottom: 8,
+  },
+  debugContainer: {
+    gap: 8,
+    marginBottom: 16,
+    padding: 16,
+    backgroundColor: 'rgba(0, 0, 0, 0.05)',
+    borderRadius: 8,
+  },
+  debugText: {
+    fontSize: 14,
+    fontFamily: 'monospace',
+  },
+  testContainer: {
+    gap: 12,
+    marginBottom: 16,
+    padding: 16,
+    backgroundColor: 'rgba(0, 0, 0, 0.05)',
+    borderRadius: 8,
+  },
+  testButton: {
+    padding: 12,
+    backgroundColor: '#0a7ea4',
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  signOutButton: {
+    backgroundColor: '#dc3545',
+    marginTop: 8,
+  },
+  buttonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
   },
   reactLogo: {
     height: 178,
