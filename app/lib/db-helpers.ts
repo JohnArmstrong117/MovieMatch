@@ -67,7 +67,10 @@ export const streamingServiceHelpers = {
       .eq('user_id', userId);
     
     if (error) throw error;
-    return data.map((item: any) => item.streaming_services);
+    // Filter out null values in case of missing joins
+    return data
+      .map((item: any) => item.streaming_services)
+      .filter((service: any) => service != null);
   },
 
   async addUserService(userId: string, serviceId: string): Promise<void> {
@@ -119,7 +122,10 @@ export const genreHelpers = {
       .eq('user_id', userId);
     
     if (error) throw error;
-    return data.map((item: any) => item.genres);
+    // Filter out null values in case of missing joins
+    return data
+      .map((item: any) => item.genres)
+      .filter((genre: any) => genre != null);
   },
 
   async addUserGenre(userId: string, genreId: string): Promise<void> {

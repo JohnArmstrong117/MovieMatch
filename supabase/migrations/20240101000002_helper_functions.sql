@@ -1,11 +1,13 @@
 -- Helper function to automatically create matches from liked swipes
 -- This function can be called to sync matches from swipes
+-- IMPORTANT: Only syncs swipes with decision = 'like', never 'pass'
 CREATE OR REPLACE FUNCTION public.sync_matches_from_swipes(p_user_id UUID)
 RETURNS INTEGER AS $$
 DECLARE
   inserted_count INTEGER;
 BEGIN
   -- Insert matches from swipes where decision = 'like' and not already in matches
+  -- Also remove any matches that should not exist (if user changed a like to pass, though this shouldn't happen with current constraints)
   INSERT INTO public.matches (user_id, tmdb_id, type, created_at)
   SELECT 
     s.user_id,
@@ -14,7 +16,7 @@ BEGIN
     s.created_at
   FROM public.swipes s
   WHERE s.user_id = p_user_id
-    AND s.decision = 'like'
+    AND s.decision = 'like'  -- CRITICAL: Only sync likes, never passes
     AND NOT EXISTS (
       SELECT 1 FROM public.matches m
       WHERE m.user_id = s.user_id

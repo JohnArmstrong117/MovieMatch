@@ -85,11 +85,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signOut = async () => {
-    const { error } = await supabase.auth.signOut();
-    if (error) throw error;
-    
-    setSession(null);
-    setUser(null);
+    try {
+      const { error } = await supabase.auth.signOut();
+      if (error) {
+        console.error('Sign out error:', error);
+        throw error;
+      }
+      
+      // Clear state even if there was an error (best effort)
+      setSession(null);
+      setUser(null);
+    } catch (error: any) {
+      console.error('Error during sign out:', error);
+      // Clear state anyway to ensure UI updates
+      setSession(null);
+      setUser(null);
+      // Re-throw if it's not a response read error
+      if (!error?.message?.includes('already read')) {
+        throw error;
+      }
+    }
   };
 
   const resetPassword = async (email: string) => {

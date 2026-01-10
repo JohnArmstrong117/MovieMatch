@@ -47,14 +47,15 @@ export default function PreferencesScreen() {
           profileHelpers.getProfile(user.id),
         ]);
 
-      setStreamingServices(allServices);
-      setUserServices(userServicesData.map(s => s.id));
-      setGenres(allGenres);
-      setUserGenres(userGenresData.map(g => g.id));
+      setStreamingServices(allServices || []);
+      setUserServices((userServicesData || []).map(s => s.id));
+      setGenres(allGenres || []);
+      setUserGenres((userGenresData || []).map(g => g.id));
       setCountryCode(profile?.country_code || '');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error loading preferences:', error);
-      Alert.alert('Error', 'Failed to load preferences');
+      const errorMessage = error?.message || error?.code || 'Unknown error';
+      Alert.alert('Error', `Failed to load preferences: ${errorMessage}`);
     } finally {
       setLoading(false);
     }

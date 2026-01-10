@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { StyleSheet, View, TouchableOpacity, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/contexts/auth-context';
-import { swipeHelpers } from '@/lib/db-helpers';
+import { swipeHelpers, matchHelpers } from '@/lib/db-helpers';
 import { mockTMDB, type MockTitle } from '@/lib/mock-tmdb';
 import { SwipeCard } from '@/components/swipe-card';
 import { ThemedView } from '@/components/themed-view';
@@ -15,7 +15,9 @@ export default function SwipeScreen() {
   const [titles, setTitles] = useState<MockTitle[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [hasPreferences, setHasPreferences] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
 
   useEffect(() => {
     checkPreferences();
@@ -75,13 +77,25 @@ export default function SwipeScreen() {
       const providerIds = services.map(s => s.provider_key);
       const genreIds = genres.map(g => g.external_id);
 
+      console.log('[SwipeScreen] Loading titles with filters:', {
+        providerIds,
+        genreIds,
+        serviceCount: services.length,
+        genreCount: genres.length,
+      });
+
       // Fetch titles from mock TMDB (replace with real API)
+      // Reset page when loading fresh titles
+      setCurrentPage(1);
       const fetchedTitles = await mockTMDB.getTitles({
         type: 'both',
         genreIds,
         providerIds,
         limit: 10,
+        page: 1,
       });
+
+      console.log('[SwipeScreen] Fetched titles:', fetchedTitles.map(t => `${t.title} (${t.type}-${t.id})`));
 
       // Filter out titles user has already swiped on
       const swipedChecks = await Promise.all(
@@ -90,15 +104,27 @@ export default function SwipeScreen() {
         )
       );
 
+      // Log which titles were filtered out
+      fetchedTitles.forEach((title, index) => {
+        if (swipedChecks[index]) {
+          console.log(`[SwipeScreen] Filtered out already swiped: ${title.title} (${title.type}-${title.id})`);
+        }
+      });
+
       const unswipedTitles = fetchedTitles.filter(
         (_, index) => !swipedChecks[index]
       );
+
+      console.log('[SwipeScreen] After filtering swiped titles:', unswipedTitles.map(t => `${t.title} (${t.type}-${t.id})`));
 
       // Remove duplicates by creating a unique key from type and id
       const uniqueTitles = unswipedTitles.filter(
         (title, index, self) =>
           index === self.findIndex(t => t.id === title.id && t.type === title.type)
       );
+
+      console.log('[SwipeScreen] Unique titles after deduplication:', uniqueTitles.map(t => `${t.title} (${t.type}-${t.id})`));
+      console.log('[SwipeScreen] Setting titles array with length:', uniqueTitles.length);
 
       setTitles(uniqueTitles);
       setCurrentIndex(0);
@@ -133,7 +159,7 @@ export default function SwipeScreen() {
         metadata: { genre_ids: title.genre_ids },
       });
 
-      // Save swipe
+      // Save swipe with decision='like'
       await swipeHelpers.createSwipe({
         user_id: user.id,
         tmdb_id: title.id,
@@ -141,12 +167,16 @@ export default function SwipeScreen() {
         decision: 'like',
       });
 
+      // Immediately sync this like to matches
+      await matchHelpers.syncFromSwipes(user.id);
+
       // Move to next card
       const nextIndex = currentIndex + 1;
       setCurrentIndex(nextIndex);
 
       // Load more if running low (using nextIndex to check future state)
-      if (nextIndex >= titles.length - 2 && nextIndex < titles.length) {
+      // Only load if we're not already loading more
+      if (nextIndex >= titles.length - 2 && nextIndex < titles.length && !loadingMore) {
         loadMoreTitles();
       }
     } catch (error) {
@@ -191,7 +221,8 @@ export default function SwipeScreen() {
       setCurrentIndex(nextIndex);
 
       // Load more if running low (using nextIndex to check future state)
-      if (nextIndex >= titles.length - 2 && nextIndex < titles.length) {
+      // Only load if we're not already loading more
+      if (nextIndex >= titles.length - 2 && nextIndex < titles.length && !loadingMore) {
         loadMoreTitles();
       }
     } catch (error) {
@@ -201,8 +232,10 @@ export default function SwipeScreen() {
   };
 
   const loadMoreTitles = async () => {
-    if (!user || loading) return;
+    // Prevent concurrent calls
+    if (!user || loading || loadingMore) return;
 
+    setLoadingMore(true);
     try {
       const [services, genres] = await Promise.all([
         streamingServiceHelpers.getUserServices(user.id),
@@ -212,12 +245,21 @@ export default function SwipeScreen() {
       const providerIds = services.map(s => s.provider_key);
       const genreIds = genres.map(g => g.external_id);
 
+      // Increment page to get different titles
+      const nextPage = currentPage + 1;
+      setCurrentPage(nextPage);
+
+      console.log('[SwipeScreen] Loading more titles, page:', nextPage);
+
       const fetchedTitles = await mockTMDB.getTitles({
         type: 'both',
         genreIds,
         providerIds,
         limit: 10,
+        page: nextPage,
       });
+
+      console.log('[SwipeScreen] Fetched more titles:', fetchedTitles.map(t => `${t.title} (${t.type}-${t.id})`));
 
       // Filter out already swiped titles
       const swipedChecks = await Promise.all(
@@ -230,23 +272,56 @@ export default function SwipeScreen() {
         (_, index) => !swipedChecks[index]
       );
 
-      // Remove duplicates - check both swiped titles and existing titles array
-      const existingIds = new Set(titles.map(t => `${t.type}-${t.id}`));
-      const newUniqueTitles = unswipedTitles.filter(
-        title => !existingIds.has(`${title.type}-${title.id}`)
-      );
+      console.log('[SwipeScreen] After filtering swiped (loadMore):', unswipedTitles.map(t => `${t.title} (${t.type}-${t.id})`));
 
-      // Also remove duplicates within the new batch
-      const uniqueNewTitles = newUniqueTitles.filter(
-        (title, index, self) =>
-          index === self.findIndex(t => t.id === title.id && t.type === title.type)
-      );
+      // Use functional update to ensure we check against latest state
+      // This prevents race conditions when multiple calls happen
+      setTitles(prev => {
+        console.log('[SwipeScreen] loadMoreTitles - Current titles before update:', prev.map(t => `${t.title} (${t.type}-${t.id})`));
+        console.log('[SwipeScreen] loadMoreTitles - New titles to add:', unswipedTitles.map(t => `${t.title} (${t.type}-${t.id})`));
+        
+        // Create a Set of existing title keys for efficient lookup
+        const existingIds = new Set(
+          prev.map(t => `${t.type}-${t.id}`)
+        );
 
-      if (uniqueNewTitles.length > 0) {
-        setTitles(prev => [...prev, ...uniqueNewTitles]);
-      }
+        // Also track duplicates within the new batch
+        const seenInBatch = new Set<string>();
+
+        // Filter out duplicates - both against existing and within batch
+        const uniqueNewTitles = unswipedTitles.filter(title => {
+          const key = `${title.type}-${title.id}`;
+          
+          // Skip if already in existing titles
+          if (existingIds.has(key)) {
+            console.log(`[SwipeScreen] Skipping duplicate: ${title.title} (${key}) - already in existing titles`);
+            return false;
+          }
+          
+          // Skip if duplicate within this batch
+          if (seenInBatch.has(key)) {
+            console.log(`[SwipeScreen] Skipping duplicate: ${title.title} (${key}) - duplicate in batch`);
+            return false;
+          }
+          
+          seenInBatch.add(key);
+          return true;
+        });
+
+        // Only return new array if we have new titles to avoid unnecessary re-renders
+        if (uniqueNewTitles.length === 0) {
+          console.log('[SwipeScreen] No new unique titles to add');
+          return prev;
+        }
+
+        const newTitles = [...prev, ...uniqueNewTitles];
+        console.log('[SwipeScreen] Final titles after update:', newTitles.map(t => `${t.title} (${t.type}-${t.id})`));
+        return newTitles;
+      });
     } catch (error) {
       console.error('Error loading more titles:', error);
+    } finally {
+      setLoadingMore(false);
     }
   };
 
@@ -292,19 +367,40 @@ export default function SwipeScreen() {
     );
   }
 
-  const visibleCards = titles
-    .slice(currentIndex, currentIndex + 3)
+  // Get the next 3 titles to display, ensuring we don't go beyond array bounds
+  const nextTitles = titles.slice(currentIndex, currentIndex + 3);
+  
+  // Debug: Log what we're displaying
+  if (nextTitles.length > 0) {
+    console.log(`[SwipeScreen] Displaying cards (currentIndex: ${currentIndex}, total titles: ${titles.length}):`, 
+      nextTitles.map((t, idx) => `${t.title} (${t.type}-${t.id}) at display index ${idx}`));
+  }
+  
+  // Render cards - first card in array should be on top (highest z-index)
+  // Render in reverse order so last card (first in array) appears on top
+  // but use original index for z-index calculation
+  const visibleCards = [...nextTitles]
     .reverse()
-    .map((title, index) => (
-      <SwipeCard
-        key={`${title.type}-${title.id}-${currentIndex + index}`}
-        title={title}
-        onSwipeLeft={handleSwipeLeft}
-        onSwipeRight={handleSwipeRight}
-        index={index}
-        total={Math.min(3, titles.length - currentIndex)}
-      />
-    ));
+    .map((title, reverseIndex) => {
+      // Calculate the actual index in the original array
+      const actualIndex = currentIndex + (nextTitles.length - 1 - reverseIndex);
+      // Use the original display index (0, 1, 2) for z-index, not reverseIndex
+      // First card (display index 0) should have highest z-index
+      const displayIndex = nextTitles.length - 1 - reverseIndex;
+      // Critical: Include currentIndex in key to force complete remount when swiping
+      const uniqueKey = `card-pos-${currentIndex}-idx-${actualIndex}-${title.type}-${title.id}`;
+      console.log(`[SwipeScreen] Rendering card: ${title.title} with key ${uniqueKey} at reverseIndex ${reverseIndex}, displayIndex ${displayIndex}, actualIndex ${actualIndex}, currentIndex ${currentIndex}`);
+      return (
+        <SwipeCard
+          key={uniqueKey}
+          title={title}
+          onSwipeLeft={handleSwipeLeft}
+          onSwipeRight={handleSwipeRight}
+          index={displayIndex}  // Use displayIndex (0-based from start of nextTitles) for z-index
+          total={nextTitles.length}
+        />
+      );
+    });
 
   return (
     <ThemedView style={styles.container}>
