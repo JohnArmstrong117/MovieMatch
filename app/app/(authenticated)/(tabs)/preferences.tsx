@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   StyleSheet,
   ScrollView,
@@ -6,6 +6,8 @@ import {
   View,
   Alert,
   ActivityIndicator,
+  Image,
+  TextInput,
 } from 'react-native';
 import { useAuth } from '@/contexts/auth-context';
 import {
@@ -13,19 +15,33 @@ import {
   genreHelpers,
   profileHelpers,
 } from '@/lib/db-helpers';
-import type { StreamingService, Genre } from '@/lib/db-helpers';
+import type { TMDBProvider, TMDBGenre } from '@/lib/db-helpers';
 import { ThemedView } from '@/components/themed-view';
 import { ThemedText } from '@/components/themed-text';
+
+const TMDB_IMAGE_BASE_URL = 'https://image.tmdb.org/t/p/w92';
 
 export default function PreferencesScreen() {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [streamingServices, setStreamingServices] = useState<StreamingService[]>([]);
-  const [userServices, setUserServices] = useState<string[]>([]);
-  const [genres, setGenres] = useState<Genre[]>([]);
-  const [userGenres, setUserGenres] = useState<string[]>([]);
+  const [streamingServices, setStreamingServices] = useState<TMDBProvider[]>([]);
+  const [userServices, setUserServices] = useState<number[]>([]);
+  const [genres, setGenres] = useState<TMDBGenre[]>([]);
+  const [userGenres, setUserGenres] = useState<number[]>([]);
   const [countryCode, setCountryCode] = useState<string>('');
+  const [providerSearchQuery, setProviderSearchQuery] = useState<string>('');
+
+  // Filter providers based on search query
+  const filteredProviders = useMemo(() => {
+    if (!providerSearchQuery.trim()) {
+      return streamingServices;
+    }
+    const query = providerSearchQuery.toLowerCase();
+    return streamingServices.filter(provider =>
+      provider.provider_name.toLowerCase().includes(query)
+    );
+  }, [streamingServices, providerSearchQuery]);
 
   useEffect(() => {
     if (user) {
@@ -48,9 +64,9 @@ export default function PreferencesScreen() {
         ]);
 
       setStreamingServices(allServices || []);
-      setUserServices((userServicesData || []).map(s => s.id));
+      setUserServices((userServicesData || []).map(p => p.provider_id));
       setGenres(allGenres || []);
-      setUserGenres((userGenresData || []).map(g => g.id));
+      setUserGenres((userGenresData || []).map(g => g.genre_id));
       setCountryCode(profile?.country_code || '');
     } catch (error: any) {
       console.error('Error loading preferences:', error);
@@ -61,15 +77,15 @@ export default function PreferencesScreen() {
     }
   };
 
-  const toggleService = (serviceId: string) => {
+  const toggleService = (providerId: number) => {
     setUserServices(prev =>
-      prev.includes(serviceId)
-        ? prev.filter(id => id !== serviceId)
-        : [...prev, serviceId]
+      prev.includes(providerId)
+        ? prev.filter(id => id !== providerId)
+        : [...prev, providerId]
     );
   };
 
-  const toggleGenre = (genreId: string) => {
+  const toggleGenre = (genreId: number) => {
     setUserGenres(prev =>
       prev.includes(genreId)
         ? prev.filter(id => id !== genreId)
@@ -97,20 +113,20 @@ export default function PreferencesScreen() {
       const currentServices = await streamingServiceHelpers.getUserServices(user.id);
       const currentGenres = await genreHelpers.getUserGenres(user.id);
 
-      const currentServiceIds = currentServices.map(s => s.id);
-      const currentGenreIds = currentGenres.map(g => g.id);
+      const currentProviderIds = currentServices.map(p => p.provider_id);
+      const currentGenreIds = currentGenres.map(g => g.genre_id);
 
       // Remove services that are no longer selected
-      for (const serviceId of currentServiceIds) {
-        if (!userServices.includes(serviceId)) {
-          await streamingServiceHelpers.removeUserService(user.id, serviceId);
+      for (const providerId of currentProviderIds) {
+        if (!userServices.includes(providerId)) {
+          await streamingServiceHelpers.removeUserService(user.id, providerId);
         }
       }
 
       // Add new services
-      for (const serviceId of userServices) {
-        if (!currentServiceIds.includes(serviceId)) {
-          await streamingServiceHelpers.addUserService(user.id, serviceId);
+      for (const providerId of userServices) {
+        if (!currentProviderIds.includes(providerId)) {
+          await streamingServiceHelpers.addUserService(user.id, providerId);
         }
       }
 
@@ -133,7 +149,7 @@ export default function PreferencesScreen() {
         await profileHelpers.updateProfile(user.id, { country_code: countryCode });
       }
 
-      Alert.alert('Success', 'Preferences saved!');
+      Alert.alert('Success', 'Preferences saved! Your movie feed will refresh when you return to the swipe screen.');
     } catch (error) {
       console.error('Error saving preferences:', error);
       Alert.alert('Error', 'Failed to save preferences');
@@ -155,34 +171,6 @@ export default function PreferencesScreen() {
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <ThemedView style={styles.section}>
         <ThemedText type="subtitle" style={styles.sectionTitle}>
-          Streaming Services
-        </ThemedText>
-        <ThemedText style={styles.sectionDescription}>
-          Select the streaming services you subscribe to
-        </ThemedText>
-        <View style={styles.chipContainer}>
-          {streamingServices.map(service => (
-            <TouchableOpacity
-              key={service.id}
-              style={[
-                styles.chip,
-                userServices.includes(service.id) && styles.chipActive,
-              ]}
-              onPress={() => toggleService(service.id)}>
-              <ThemedText
-                style={[
-                  styles.chipText,
-                  userServices.includes(service.id) && styles.chipTextActive,
-                ]}>
-                {service.name}
-              </ThemedText>
-            </TouchableOpacity>
-          ))}
-        </View>
-      </ThemedView>
-
-      <ThemedView style={styles.section}>
-        <ThemedText type="subtitle" style={styles.sectionTitle}>
           Favorite Genres
         </ThemedText>
         <ThemedText style={styles.sectionDescription}>
@@ -191,22 +179,77 @@ export default function PreferencesScreen() {
         <View style={styles.chipContainer}>
           {genres.map(genre => (
             <TouchableOpacity
-              key={genre.id}
+              key={genre.genre_id}
               style={[
                 styles.chip,
-                userGenres.includes(genre.id) && styles.chipActive,
+                userGenres.includes(genre.genre_id) && styles.chipActive,
               ]}
-              onPress={() => toggleGenre(genre.id)}>
+              onPress={() => toggleGenre(genre.genre_id)}>
               <ThemedText
                 style={[
                   styles.chipText,
-                  userGenres.includes(genre.id) && styles.chipTextActive,
+                  userGenres.includes(genre.genre_id) && styles.chipTextActive,
                 ]}>
                 {genre.name}
               </ThemedText>
             </TouchableOpacity>
           ))}
         </View>
+      </ThemedView>
+
+      <ThemedView style={styles.section}>
+        <ThemedText type="subtitle" style={styles.sectionTitle}>
+          Streaming Services
+        </ThemedText>
+        <ThemedText style={styles.sectionDescription}>
+          Select the streaming services you subscribe to
+        </ThemedText>
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search providers..."
+          placeholderTextColor="#999"
+          value={providerSearchQuery}
+          onChangeText={setProviderSearchQuery}
+        />
+        <View style={styles.chipContainer}>
+          {filteredProviders.map(provider => {
+            const isSelected = userServices.includes(provider.provider_id);
+            const logoUrl = provider.logo_path 
+              ? `${TMDB_IMAGE_BASE_URL}${provider.logo_path}` 
+              : null;
+            
+            return (
+              <TouchableOpacity
+                key={provider.provider_id}
+                style={[
+                  styles.chip,
+                  isSelected && styles.chipActive,
+                  logoUrl && styles.chipWithLogo,
+                ]}
+                onPress={() => toggleService(provider.provider_id)}>
+                {logoUrl && (
+                  <Image 
+                    source={{ uri: logoUrl }} 
+                    style={styles.providerLogo}
+                    resizeMode="contain"
+                  />
+                )}
+                <ThemedText
+                  style={[
+                    styles.chipText,
+                    isSelected && styles.chipTextActive,
+                  ]}>
+                  {provider.provider_name}
+                </ThemedText>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+        {filteredProviders.length === 0 && providerSearchQuery && (
+          <ThemedText style={styles.noResultsText}>
+            No providers found matching "{providerSearchQuery}"
+          </ThemedText>
+        )}
       </ThemedView>
 
       <TouchableOpacity
@@ -245,6 +288,22 @@ const styles = StyleSheet.create({
     opacity: 0.7,
     fontSize: 14,
   },
+  searchInput: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 16,
+    marginBottom: 16,
+    backgroundColor: '#fff',
+  },
+  noResultsText: {
+    textAlign: 'center',
+    marginTop: 16,
+    opacity: 0.6,
+    fontStyle: 'italic',
+  },
   chipContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -257,10 +316,20 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#ddd',
     backgroundColor: 'transparent',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  chipWithLogo: {
+    paddingLeft: 8,
   },
   chipActive: {
     backgroundColor: '#0a7ea4',
     borderColor: '#0a7ea4',
+  },
+  providerLogo: {
+    width: 24,
+    height: 24,
   },
   chipText: {
     fontSize: 14,

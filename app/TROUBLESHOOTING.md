@@ -66,3 +66,4 @@ Check the terminal for error messages. Common issues:
 3. Try restarting Supabase: `supabase stop && supabase start`
 4. Check if you're logged in (should see auth status on Home tab)
 
+ 

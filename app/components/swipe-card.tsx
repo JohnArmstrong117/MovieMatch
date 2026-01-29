@@ -35,21 +35,6 @@ export function SwipeCard({ title, onSwipeLeft, onSwipeRight, index, total }: Sw
   const scale = useSharedValue(1);
   const opacity = useSharedValue(1);
 
-  // Track if this is the first render to force reset
-  const renderCountRef = React.useRef(0);
-  renderCountRef.current += 1;
-
-  // Reset animated values when title changes to prevent stale state
-  React.useEffect(() => {
-    console.log(`[SwipeCard] Card mounted/updated - Title: ${title.title} (${title.type}-${title.id}), index: ${index}, total: ${total}, renderCount: ${renderCountRef.current}`);
-    // Force reset all animation values - this ensures no stale state
-    translateX.value = 0;
-    translateY.value = 0;
-    scale.value = 1;
-    opacity.value = 1;
-  }, [title.id, title.type, title.title, index, total, translateX, translateY, scale, opacity]);
-  
-
   const isTopCard = index === total - 1;
 
   const panGesture = Gesture.Pan()
@@ -141,9 +126,6 @@ export function SwipeCard({ title, onSwipeLeft, onSwipeRight, index, total }: Sw
     ? `https://image.tmdb.org/t/p/w500${title.poster_path}`
     : null;
 
-  // Log on every render to see what's actually being rendered
-  console.log(`[SwipeCard] Rendering with title: "${title.title}" (${title.type}-${title.id}), index: ${index}, posterUrl: ${posterUrl}`);
-
   return (
     <GestureDetector gesture={panGesture}>
       <Animated.View style={[styles.card, animatedCardStyle]}>
@@ -151,12 +133,10 @@ export function SwipeCard({ title, onSwipeLeft, onSwipeRight, index, total }: Sw
         <ThemedView style={styles.cardContent}>
           {posterUrl ? (
             <Image
-              key={`poster-${title.id}-${title.type}`}
               source={{ uri: posterUrl }}
               style={styles.poster}
               contentFit="cover"
               transition={200}
-              cachePolicy="memory-disk"
             />
           ) : (
             <View style={[styles.poster, styles.posterPlaceholder]}>
@@ -172,11 +152,8 @@ export function SwipeCard({ title, onSwipeLeft, onSwipeRight, index, total }: Sw
 
           {/* Content overlay */}
           <View style={styles.contentOverlay}>
-            {/* Debug: Show actual title being rendered */}
-            <ThemedText type="title" style={styles.title} key={`title-text-${title.id}-${title.type}`}>
+            <ThemedText type="title" style={styles.title}>
               {title.title}
-              {/* Debug indicator - remove after fixing */}
-              {__DEV__ && <ThemedText style={{ fontSize: 10, opacity: 0.5 }}> (ID: {title.id}, idx: {index})</ThemedText>}
             </ThemedText>
             <ThemedText style={styles.overview} numberOfLines={3}>
               {title.overview}

@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { StyleSheet, FlatList, TouchableOpacity, RefreshControl, View } from 'react-native';
 import { Image } from 'expo-image';
+import { useFocusEffect } from 'expo-router';
 import { useAuth } from '@/contexts/auth-context';
 import { matchHelpers } from '@/lib/db-helpers';
 import { ThemedView } from '@/components/themed-view';
@@ -18,16 +19,49 @@ export default function MatchesScreen() {
     }
   }, [user]);
 
+  // Refresh matches when screen comes into focus (e.g., after swiping)
+  useFocusEffect(
+    useCallback(() => {
+      if (user) {
+        loadMatches();
+      }
+    }, [user])
+  );
+
   const loadMatches = async () => {
     if (!user) return;
 
     try {
       // Sync matches from swipes first
-      await matchHelpers.syncFromSwipes(user.id);
+      const syncCount = await matchHelpers.syncFromSwipes(user.id);
+      console.log(`🔄 Synced ${syncCount} new matches from swipes`);
+
+      // Diagnostic: Check for mismatches (only in dev)
+      if (__DEV__) {
+        const diagnostics = await matchHelpers.diagnoseMismatches(user.id);
+        console.log('📊 Match Diagnostics:', {
+          totalLikes: diagnostics.totalLikes,
+          totalMatches: diagnostics.totalMatches,
+          likesWithoutMatches: diagnostics.likesWithoutMatches.length,
+          matchesWithoutLikes: diagnostics.matchesWithoutLikes.length,
+          passesWithMatches: diagnostics.passesWithMatches.length,
+        });
+        
+        if (diagnostics.likesWithoutMatches.length > 0) {
+          console.warn('⚠️ Likes without matches:', diagnostics.likesWithoutMatches);
+        }
+        if (diagnostics.matchesWithoutLikes.length > 0) {
+          console.warn('⚠️ Matches without likes:', diagnostics.matchesWithoutLikes);
+        }
+        if (diagnostics.passesWithMatches.length > 0) {
+          console.warn('⚠️ Passes with matches (should not happen):', diagnostics.passesWithMatches);
+        }
+      }
 
       // Load matches with title data
       const matchesData = await matchHelpers.getMatchesWithTitles(user.id);
       setMatches(matchesData);
+      console.log(`✅ Loaded ${matchesData.length} matches`);
     } catch (error) {
       console.error('Error loading matches:', error);
     } finally {

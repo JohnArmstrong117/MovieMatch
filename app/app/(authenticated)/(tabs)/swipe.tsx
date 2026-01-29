@@ -1,13 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { StyleSheet, View, TouchableOpacity, Alert } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { useAuth } from '@/contexts/auth-context';
-import { swipeHelpers, matchHelpers } from '@/lib/db-helpers';
-import { mockTMDB, type MockTitle } from '@/lib/mock-tmdb';
+import { swipeHelpers } from '@/lib/db-helpers';
+import type { MockTitle } from '@/lib/mock-tmdb';
 import { SwipeCard } from '@/components/swipe-card';
 import { ThemedView } from '@/components/themed-view';
 import { ThemedText } from '@/components/themed-text';
-import { genreHelpers, streamingServiceHelpers, titleHelpers } from '@/lib/db-helpers';
+import { genreHelpers, streamingServiceHelpers, titleHelpers, feedHelpers, matchHelpers } from '@/lib/db-helpers';
 
 export default function SwipeScreen() {
   const { user } = useAuth();
@@ -15,7 +15,6 @@ export default function SwipeScreen() {
   const [titles, setTitles] = useState<MockTitle[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
   const [hasPreferences, setHasPreferences] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
 
@@ -28,6 +27,19 @@ export default function SwipeScreen() {
       loadTitles();
     }
   }, [hasPreferences, user]);
+
+  // Refresh titles when screen comes into focus (e.g., after preferences update)
+  useFocusEffect(
+    useCallback(() => {
+      if (hasPreferences && user) {
+        // Reset and reload titles to reflect any preference changes
+        loadTitles();
+      } else if (user) {
+        // Re-check preferences in case they were set
+        checkPreferences();
+      }
+    }, [hasPreferences, user])
+  );
 
   const checkPreferences = async () => {
     if (!user) return;
@@ -74,63 +86,60 @@ export default function SwipeScreen() {
         genreHelpers.getUserGenres(user.id),
       ]);
 
-      const providerIds = services.map(s => s.provider_key);
-      const genreIds = genres.map(g => g.external_id);
+      // Fetch movies from TMDB via Edge Function
+      console.log('📡 Fetching movies from feed_movies...');
+      const feedResponse = await feedHelpers.getMovies({ limit: 20, page: 1 });
+      console.log(`📦 Received ${feedResponse.items.length} movies from feed`);
 
-      console.log('[SwipeScreen] Loading titles with filters:', {
-        providerIds,
-        genreIds,
-        serviceCount: services.length,
-        genreCount: genres.length,
-      });
+      // Transform FeedMovie to MockTitle format
+      const fetchedTitles: MockTitle[] = feedResponse.items.map(movie => ({
+        id: movie.tmdb_id,
+        title: movie.title,
+        original_title: movie.title,
+        overview: movie.overview,
+        poster_path: movie.poster_path,
+        backdrop_path: null, // TMDB feed doesn't include backdrop_path
+        release_date: movie.release_date || undefined,
+        first_air_date: undefined,
+        vote_average: movie.vote_average || 0,
+        vote_count: movie.vote_count || 0,
+        popularity: movie.popularity || 0,
+        type: 'movie' as const,
+        genre_ids: [], // Genre IDs not included in feed response
+      }));
 
-      // Fetch titles from mock TMDB (replace with real API)
-      // Reset page when loading fresh titles
-      setCurrentPage(1);
-      const fetchedTitles = await mockTMDB.getTitles({
-        type: 'both',
-        genreIds,
-        providerIds,
-        limit: 10,
-        page: 1,
-      });
-
-      console.log('[SwipeScreen] Fetched titles:', fetchedTitles.map(t => `${t.title} (${t.type}-${t.id})`));
-
-      // Filter out titles user has already swiped on
-      const swipedChecks = await Promise.all(
-        fetchedTitles.map(title =>
-          swipeHelpers.hasSwiped(user.id, title.id, title.type).catch(() => false)
-        )
-      );
-
-      // Log which titles were filtered out
-      fetchedTitles.forEach((title, index) => {
-        if (swipedChecks[index]) {
-          console.log(`[SwipeScreen] Filtered out already swiped: ${title.title} (${title.type}-${title.id})`);
-        }
-      });
-
-      const unswipedTitles = fetchedTitles.filter(
-        (_, index) => !swipedChecks[index]
-      );
-
-      console.log('[SwipeScreen] After filtering swiped titles:', unswipedTitles.map(t => `${t.title} (${t.type}-${t.id})`));
-
+      // Feed function already filters out swiped movies, but we'll keep the check for safety
       // Remove duplicates by creating a unique key from type and id
-      const uniqueTitles = unswipedTitles.filter(
+      const uniqueTitles = fetchedTitles.filter(
         (title, index, self) =>
           index === self.findIndex(t => t.id === title.id && t.type === title.type)
       );
 
-      console.log('[SwipeScreen] Unique titles after deduplication:', uniqueTitles.map(t => `${t.title} (${t.type}-${t.id})`));
-      console.log('[SwipeScreen] Setting titles array with length:', uniqueTitles.length);
-
       setTitles(uniqueTitles);
       setCurrentIndex(0);
-    } catch (error) {
+      setCurrentPage(1);
+    } catch (error: any) {
       console.error('Error loading titles:', error);
-      Alert.alert('Error', 'Failed to load titles');
+      console.error('Error details:', error?.details);
+      console.error('Error status:', error?.status);
+      console.error('Error response data:', error?.responseData);
+      
+      // Handle specific errors from feed_movies Edge Function
+      const errorMessage = error?.message || error?.error || error?.responseData?.error || error?.responseData?.message || 'Failed to load titles';
+      
+      if (errorMessage.includes('No providers selected') || errorMessage.includes('No genres selected')) {
+        setHasPreferences(false);
+        Alert.alert('Setup Required', errorMessage);
+      } else if (errorMessage.includes('TMDB_API_KEY not configured')) {
+        Alert.alert(
+          'Configuration Error',
+          'TMDB API key is not configured. Please check your Edge Functions setup.'
+        );
+      } else if (errorMessage.includes('Unauthorized') || errorMessage.includes('Invalid token')) {
+        Alert.alert('Authentication Error', 'Please sign in again.');
+      } else {
+        Alert.alert('Error', errorMessage);
+      }
     } finally {
       setLoading(false);
     }
@@ -159,24 +168,38 @@ export default function SwipeScreen() {
         metadata: { genre_ids: title.genre_ids },
       });
 
-      // Save swipe with decision='like'
-      await swipeHelpers.createSwipe({
+      // Save swipe FIRST (this is the source of truth)
+      console.log(`💾 Saving LIKE swipe: user_id=${user.id}, tmdb_id=${title.id}, type=${title.type}`);
+      const swipe = await swipeHelpers.createSwipe({
         user_id: user.id,
         tmdb_id: title.id,
         type: title.type,
         decision: 'like',
       });
+      console.log(`✅ Swipe saved:`, { id: swipe.id, tmdb_id: swipe.tmdb_id, type: swipe.type, decision: swipe.decision });
 
-      // Immediately sync this like to matches
-      await matchHelpers.syncFromSwipes(user.id);
+      // Create match immediately AFTER swipe is saved
+      // This ensures the swipe exists before the match
+      try {
+        console.log(`💾 Creating match: user_id=${user.id}, tmdb_id=${title.id}, type=${title.type}`);
+        const match = await matchHelpers.createMatch(user.id, title.id, title.type);
+        console.log(`✅ Created match for ${title.title}:`, { match_id: match.id, tmdb_id: match.tmdb_id, type: match.type });
+      } catch (error: any) {
+        // If match already exists, that's fine (idempotent)
+        if (error?.code === '23505') {
+          console.log(`ℹ️ Match already exists for ${title.title} (${title.id})`);
+        } else {
+          console.error('❌ Error creating match:', error);
+          // Don't fail the swipe if match creation fails - sync will handle it later
+        }
+      }
 
       // Move to next card
       const nextIndex = currentIndex + 1;
       setCurrentIndex(nextIndex);
 
       // Load more if running low (using nextIndex to check future state)
-      // Only load if we're not already loading more
-      if (nextIndex >= titles.length - 2 && nextIndex < titles.length && !loadingMore) {
+      if (nextIndex >= titles.length - 2 && nextIndex < titles.length) {
         loadMoreTitles();
       }
     } catch (error) {
@@ -208,21 +231,37 @@ export default function SwipeScreen() {
         metadata: { genre_ids: title.genre_ids },
       });
 
-      // Save swipe
-      await swipeHelpers.createSwipe({
+      // Save swipe FIRST (this is the source of truth)
+      console.log(`💾 Saving PASS swipe: user_id=${user.id}, tmdb_id=${title.id}, type=${title.type}`);
+      const swipe = await swipeHelpers.createSwipe({
         user_id: user.id,
         tmdb_id: title.id,
         type: title.type,
         decision: 'pass',
       });
+      console.log(`✅ Swipe saved:`, { id: swipe.id, tmdb_id: swipe.tmdb_id, type: swipe.type, decision: swipe.decision });
+
+      // Remove match if it exists (in case user changed their mind or it was incorrectly added)
+      try {
+        console.log(`🗑️ Removing match: user_id=${user.id}, tmdb_id=${title.id}, type=${title.type}`);
+        await matchHelpers.removeMatch(user.id, title.id, title.type);
+        console.log(`✅ Removed match for ${title.title} (${title.id})`);
+      } catch (error: any) {
+        // If match doesn't exist, that's fine (idempotent)
+        if (error?.code === 'PGRST116') {
+          console.log(`ℹ️ No match to remove for ${title.title} (${title.id})`);
+        } else {
+          console.error('❌ Error removing match:', error);
+          // Don't fail the swipe if match removal fails - sync will handle it later
+        }
+      }
 
       // Move to next card
       const nextIndex = currentIndex + 1;
       setCurrentIndex(nextIndex);
 
       // Load more if running low (using nextIndex to check future state)
-      // Only load if we're not already loading more
-      if (nextIndex >= titles.length - 2 && nextIndex < titles.length && !loadingMore) {
+      if (nextIndex >= titles.length - 2 && nextIndex < titles.length) {
         loadMoreTitles();
       }
     } catch (error) {
@@ -232,96 +271,45 @@ export default function SwipeScreen() {
   };
 
   const loadMoreTitles = async () => {
-    // Prevent concurrent calls
-    if (!user || loading || loadingMore) return;
+    if (!user || loading) return;
 
-    setLoadingMore(true);
     try {
-      const [services, genres] = await Promise.all([
-        streamingServiceHelpers.getUserServices(user.id),
-        genreHelpers.getUserGenres(user.id),
-      ]);
-
-      const providerIds = services.map(s => s.provider_key);
-      const genreIds = genres.map(g => g.external_id);
-
-      // Increment page to get different titles
       const nextPage = currentPage + 1;
-      setCurrentPage(nextPage);
+      const feedResponse = await feedHelpers.getMovies({ limit: 20, page: nextPage });
 
-      console.log('[SwipeScreen] Loading more titles, page:', nextPage);
+      if (feedResponse.items.length === 0) {
+        return; // No more movies
+      }
 
-      const fetchedTitles = await mockTMDB.getTitles({
-        type: 'both',
-        genreIds,
-        providerIds,
-        limit: 10,
-        page: nextPage,
-      });
+      // Transform FeedMovie to MockTitle format
+      const newTitles: MockTitle[] = feedResponse.items.map(movie => ({
+        id: movie.tmdb_id,
+        title: movie.title,
+        original_title: movie.title,
+        overview: movie.overview,
+        poster_path: movie.poster_path,
+        backdrop_path: null,
+        release_date: movie.release_date || undefined,
+        first_air_date: undefined,
+        vote_average: movie.vote_average || 0,
+        vote_count: movie.vote_count || 0,
+        popularity: movie.popularity || 0,
+        type: 'movie' as const,
+        genre_ids: [],
+      }));
 
-      console.log('[SwipeScreen] Fetched more titles:', fetchedTitles.map(t => `${t.title} (${t.type}-${t.id})`));
-
-      // Filter out already swiped titles
-      const swipedChecks = await Promise.all(
-        fetchedTitles.map(title =>
-          swipeHelpers.hasSwiped(user.id, title.id, title.type).catch(() => false)
-        )
+      // Remove duplicates - check both existing titles array
+      const existingIds = new Set(titles.map(t => `${t.type}-${t.id}`));
+      const uniqueNewTitles = newTitles.filter(
+        title => !existingIds.has(`${title.type}-${title.id}`)
       );
 
-      const unswipedTitles = fetchedTitles.filter(
-        (_, index) => !swipedChecks[index]
-      );
-
-      console.log('[SwipeScreen] After filtering swiped (loadMore):', unswipedTitles.map(t => `${t.title} (${t.type}-${t.id})`));
-
-      // Use functional update to ensure we check against latest state
-      // This prevents race conditions when multiple calls happen
-      setTitles(prev => {
-        console.log('[SwipeScreen] loadMoreTitles - Current titles before update:', prev.map(t => `${t.title} (${t.type}-${t.id})`));
-        console.log('[SwipeScreen] loadMoreTitles - New titles to add:', unswipedTitles.map(t => `${t.title} (${t.type}-${t.id})`));
-        
-        // Create a Set of existing title keys for efficient lookup
-        const existingIds = new Set(
-          prev.map(t => `${t.type}-${t.id}`)
-        );
-
-        // Also track duplicates within the new batch
-        const seenInBatch = new Set<string>();
-
-        // Filter out duplicates - both against existing and within batch
-        const uniqueNewTitles = unswipedTitles.filter(title => {
-          const key = `${title.type}-${title.id}`;
-          
-          // Skip if already in existing titles
-          if (existingIds.has(key)) {
-            console.log(`[SwipeScreen] Skipping duplicate: ${title.title} (${key}) - already in existing titles`);
-            return false;
-          }
-          
-          // Skip if duplicate within this batch
-          if (seenInBatch.has(key)) {
-            console.log(`[SwipeScreen] Skipping duplicate: ${title.title} (${key}) - duplicate in batch`);
-            return false;
-          }
-          
-          seenInBatch.add(key);
-          return true;
-        });
-
-        // Only return new array if we have new titles to avoid unnecessary re-renders
-        if (uniqueNewTitles.length === 0) {
-          console.log('[SwipeScreen] No new unique titles to add');
-          return prev;
-        }
-
-        const newTitles = [...prev, ...uniqueNewTitles];
-        console.log('[SwipeScreen] Final titles after update:', newTitles.map(t => `${t.title} (${t.type}-${t.id})`));
-        return newTitles;
-      });
+      if (uniqueNewTitles.length > 0) {
+        setTitles(prev => [...prev, ...uniqueNewTitles]);
+        setCurrentPage(nextPage);
+      }
     } catch (error) {
       console.error('Error loading more titles:', error);
-    } finally {
-      setLoadingMore(false);
     }
   };
 
@@ -367,40 +355,19 @@ export default function SwipeScreen() {
     );
   }
 
-  // Get the next 3 titles to display, ensuring we don't go beyond array bounds
-  const nextTitles = titles.slice(currentIndex, currentIndex + 3);
-  
-  // Debug: Log what we're displaying
-  if (nextTitles.length > 0) {
-    console.log(`[SwipeScreen] Displaying cards (currentIndex: ${currentIndex}, total titles: ${titles.length}):`, 
-      nextTitles.map((t, idx) => `${t.title} (${t.type}-${t.id}) at display index ${idx}`));
-  }
-  
-  // Render cards - first card in array should be on top (highest z-index)
-  // Render in reverse order so last card (first in array) appears on top
-  // but use original index for z-index calculation
-  const visibleCards = [...nextTitles]
+  const visibleCards = titles
+    .slice(currentIndex, currentIndex + 3)
     .reverse()
-    .map((title, reverseIndex) => {
-      // Calculate the actual index in the original array
-      const actualIndex = currentIndex + (nextTitles.length - 1 - reverseIndex);
-      // Use the original display index (0, 1, 2) for z-index, not reverseIndex
-      // First card (display index 0) should have highest z-index
-      const displayIndex = nextTitles.length - 1 - reverseIndex;
-      // Critical: Include currentIndex in key to force complete remount when swiping
-      const uniqueKey = `card-pos-${currentIndex}-idx-${actualIndex}-${title.type}-${title.id}`;
-      console.log(`[SwipeScreen] Rendering card: ${title.title} with key ${uniqueKey} at reverseIndex ${reverseIndex}, displayIndex ${displayIndex}, actualIndex ${actualIndex}, currentIndex ${currentIndex}`);
-      return (
-        <SwipeCard
-          key={uniqueKey}
-          title={title}
-          onSwipeLeft={handleSwipeLeft}
-          onSwipeRight={handleSwipeRight}
-          index={displayIndex}  // Use displayIndex (0-based from start of nextTitles) for z-index
-          total={nextTitles.length}
-        />
-      );
-    });
+    .map((title, index) => (
+      <SwipeCard
+        key={`${title.type}-${title.id}-${currentIndex + index}`}
+        title={title}
+        onSwipeLeft={handleSwipeLeft}
+        onSwipeRight={handleSwipeRight}
+        index={index}
+        total={Math.min(3, titles.length - currentIndex)}
+      />
+    ));
 
   return (
     <ThemedView style={styles.container}>

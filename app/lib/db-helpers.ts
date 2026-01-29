@@ -18,6 +18,21 @@ export type Title = Tables<'titles'>;
 export type Swipe = Tables<'swipes'>;
 export type Match = Tables<'matches'>;
 
+// TMDB types (from new schema)
+export type TMDBProvider = {
+  provider_id: number;
+  provider_name: string;
+  logo_path: string | null;
+  display_priority: number | null;
+  updated_at: string;
+};
+
+export type TMDBGenre = {
+  genre_id: number;
+  name: string;
+  updated_at: string;
+};
+
 /**
  * Profile helpers
  */
@@ -47,46 +62,46 @@ export const profileHelpers = {
 };
 
 /**
- * Streaming services helpers
+ * Streaming services helpers (now using TMDB providers)
  */
 export const streamingServiceHelpers = {
-  async getAll(): Promise<StreamingService[]> {
+  async getAll(): Promise<TMDBProvider[]> {
     const { data, error } = await supabase
-      .from('streaming_services')
+      .from('tmdb_providers_movie')
       .select('*')
-      .order('name');
+      .order('provider_name');
     
     if (error) throw error;
-    return data;
+    return data || [];
   },
 
-  async getUserServices(userId: string): Promise<StreamingService[]> {
+  async getUserServices(userId: string): Promise<TMDBProvider[]> {
     const { data, error } = await supabase
-      .from('user_streaming_services')
-      .select('streaming_services(*)')
+      .from('user_providers')
+      .select('tmdb_providers_movie(*)')
       .eq('user_id', userId);
     
     if (error) throw error;
     // Filter out null values in case of missing joins
-    return data
-      .map((item: any) => item.streaming_services)
-      .filter((service: any) => service != null);
+    return (data || [])
+      .map((item: any) => item.tmdb_providers_movie)
+      .filter((provider: any) => provider != null);
   },
 
-  async addUserService(userId: string, serviceId: string): Promise<void> {
+  async addUserService(userId: string, providerId: number): Promise<void> {
     const { error } = await supabase
-      .from('user_streaming_services')
-      .insert({ user_id: userId, service_id: serviceId });
+      .from('user_providers')
+      .insert({ user_id: userId, provider_id: providerId });
     
     if (error) throw error;
   },
 
-  async removeUserService(userId: string, serviceId: string): Promise<void> {
+  async removeUserService(userId: string, providerId: number): Promise<void> {
     const { error } = await supabase
-      .from('user_streaming_services')
+      .from('user_providers')
       .delete()
       .eq('user_id', userId)
-      .eq('service_id', serviceId);
+      .eq('provider_id', providerId);
     
     if (error) throw error;
   },
@@ -102,43 +117,43 @@ export const streamingServiceHelpers = {
 };
 
 /**
- * Genre helpers
+ * Genre helpers (now using TMDB genres)
  */
 export const genreHelpers = {
-  async getAll(): Promise<Genre[]> {
+  async getAll(): Promise<TMDBGenre[]> {
     const { data, error } = await supabase
-      .from('genres')
+      .from('tmdb_genres_movie')
       .select('*')
       .order('name');
     
     if (error) throw error;
-    return data;
+    return data || [];
   },
 
-  async getUserGenres(userId: string): Promise<Genre[]> {
+  async getUserGenres(userId: string): Promise<TMDBGenre[]> {
     const { data, error } = await supabase
-      .from('user_genre_prefs')
-      .select('genres(*)')
+      .from('user_genres')
+      .select('tmdb_genres_movie(*)')
       .eq('user_id', userId);
     
     if (error) throw error;
     // Filter out null values in case of missing joins
-    return data
-      .map((item: any) => item.genres)
+    return (data || [])
+      .map((item: any) => item.tmdb_genres_movie)
       .filter((genre: any) => genre != null);
   },
 
-  async addUserGenre(userId: string, genreId: string): Promise<void> {
+  async addUserGenre(userId: string, genreId: number): Promise<void> {
     const { error } = await supabase
-      .from('user_genre_prefs')
+      .from('user_genres')
       .insert({ user_id: userId, genre_id: genreId });
     
     if (error) throw error;
   },
 
-  async removeUserGenre(userId: string, genreId: string): Promise<void> {
+  async removeUserGenre(userId: string, genreId: number): Promise<void> {
     const { error } = await supabase
-      .from('user_genre_prefs')
+      .from('user_genres')
       .delete()
       .eq('user_id', userId)
       .eq('genre_id', genreId);
@@ -214,9 +229,14 @@ export const titleHelpers = {
  */
 export const swipeHelpers = {
   async createSwipe(swipe: Inserts<'swipes'>): Promise<Swipe> {
+    // Use upsert to handle cases where user swipes on the same movie again
+    // This allows updating the decision if they change their mind
     const { data, error } = await supabase
       .from('swipes')
-      .insert(swipe)
+      .upsert(swipe, { 
+        onConflict: 'user_id,tmdb_id,type',
+        ignoreDuplicates: false 
+      })
       .select()
       .single();
     
@@ -300,6 +320,51 @@ export const matchHelpers = {
     return data;
   },
 
+  /**
+   * Create a match immediately when user likes a title
+   */
+  async createMatch(userId: string, tmdbId: number, type: 'movie' | 'tv'): Promise<Match> {
+    const { data, error } = await supabase
+      .from('matches')
+      .insert({
+        user_id: userId,
+        tmdb_id: tmdbId,
+        type: type,
+      })
+      .select()
+      .single();
+    
+    if (error) {
+      // If match already exists (conflict), that's okay - just return it
+      if (error.code === '23505') { // Unique violation
+        const { data: existing } = await supabase
+          .from('matches')
+          .select('*')
+          .eq('user_id', userId)
+          .eq('tmdb_id', tmdbId)
+          .eq('type', type)
+          .single();
+        if (existing) return existing;
+      }
+      throw error;
+    }
+    return data;
+  },
+
+  /**
+   * Remove a match when user passes on a title
+   */
+  async removeMatch(userId: string, tmdbId: number, type: 'movie' | 'tv'): Promise<void> {
+    const { error } = await supabase
+      .from('matches')
+      .delete()
+      .eq('user_id', userId)
+      .eq('tmdb_id', tmdbId)
+      .eq('type', type);
+    
+    if (error) throw error;
+  },
+
   async syncFromSwipes(userId: string): Promise<number> {
     const { data, error } = await supabase.rpc('sync_matches_from_swipes', {
       p_user_id: userId,
@@ -308,5 +373,135 @@ export const matchHelpers = {
     if (error) throw error;
     return data ?? 0;
   },
+
+  /**
+   * Diagnostic function to check for mismatches between swipes and matches
+   * Returns swipes that should have matches but don't, and matches that shouldn't exist
+   */
+  async diagnoseMismatches(userId: string) {
+    // Get all likes
+    const { data: likes } = await supabase
+      .from('swipes')
+      .select('tmdb_id, type, decision, created_at')
+      .eq('user_id', userId)
+      .eq('decision', 'like');
+
+    // Get all matches
+    const { data: matches } = await supabase
+      .from('matches')
+      .select('tmdb_id, type, created_at')
+      .eq('user_id', userId);
+
+    // Find likes without matches
+    const likesWithoutMatches = (likes || []).filter(like => 
+      !(matches || []).some(m => 
+        m.tmdb_id === like.tmdb_id && m.type === like.type
+      )
+    );
+
+    // Find matches without likes
+    const matchesWithoutLikes = (matches || []).filter(match =>
+      !(likes || []).some(like =>
+        like.tmdb_id === match.tmdb_id && 
+        like.type === match.type &&
+        like.decision === 'like'
+      )
+    );
+
+    // Find passes that have matches (shouldn't happen)
+    const { data: passes } = await supabase
+      .from('swipes')
+      .select('tmdb_id, type, decision')
+      .eq('user_id', userId)
+      .eq('decision', 'pass');
+
+    const passesWithMatches = (passes || []).filter(pass =>
+      (matches || []).some(m =>
+        m.tmdb_id === pass.tmdb_id && m.type === pass.type
+      )
+    );
+
+    return {
+      likesWithoutMatches,
+      matchesWithoutLikes,
+      passesWithMatches,
+      totalLikes: likes?.length || 0,
+      totalMatches: matches?.length || 0,
+      totalPasses: passes?.length || 0,
+    };
+  },
 };
 
+/**
+ * Movie feed helpers - uses TMDB Edge Function
+ */
+export interface FeedMovie {
+  tmdb_id: number;
+  title: string;
+  poster_path: string | null;
+  overview: string;
+  release_date: string | null;
+  popularity: number | null;
+  vote_average: number | null;
+  vote_count: number | null;
+}
+
+export interface FeedMoviesResponse {
+  items: FeedMovie[];
+  nextPage: number | null;
+}
+
+export const feedHelpers = {
+  async getMovies(options: { limit?: number; page?: number } = {}): Promise<FeedMoviesResponse> {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      throw new Error('Not authenticated');
+    }
+
+    const response = await supabase.functions.invoke('feed_movies', {
+      body: {
+        limit: options.limit || 20,
+        page: options.page || 1,
+        includeRentBuy: true,
+        includeFlatrate: true,
+      },
+    });
+
+    if (response.error) {
+      // Log full response for debugging
+      console.error('❌ Edge Function error response:', {
+        error: response.error,
+        data: response.data,
+        status: (response.error as any)?.status,
+        message: response.error.message,
+      });
+
+      // Try to extract error message from various possible locations
+      let errorMessage = 'Unknown error';
+      let errorDetails = '';
+      
+      // Check if response.data is a JSON object with error info
+      if (response.data && typeof response.data === 'object') {
+        errorMessage = (response.data as any).error || (response.data as any).message || errorMessage;
+        errorDetails = (response.data as any).details || '';
+      }
+      
+      // Fallback to error.message if we didn't find anything in data
+      if (errorMessage === 'Unknown error' && response.error.message) {
+        errorMessage = response.error.message;
+      }
+      
+      // Create enhanced error with all available info
+      const enhancedError = new Error(errorMessage);
+      (enhancedError as any).code = (response.error as any)?.name || (response.error as any)?.code || 'FUNCTIONS_ERROR';
+      (enhancedError as any).details = errorDetails;
+      (enhancedError as any).status = (response.error as any)?.status;
+      (enhancedError as any).originalError = response.error;
+      (enhancedError as any).responseData = response.data;
+      
+      throw enhancedError;
+    }
+    
+    return response.data as FeedMoviesResponse;
+  },
+};
