@@ -1,0 +1,10 @@
+Matches Invariant Diagnostic - 2026-02-03T23:13:45.954Z
+============================================================
+Invariant: A user's Matches must contain ONLY titles they said YES (like) to.
+
+Users with swipes: 1
+Total swipes: 13
+Total matches: 7
+
+============================================================
+Result: No violations found. Invariant holds.

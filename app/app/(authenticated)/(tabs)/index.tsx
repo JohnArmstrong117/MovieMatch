@@ -1,178 +1,442 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet, ScrollView, TouchableOpacity, Alert } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-
-import { HelloWave } from '@/components/hello-wave';
-import ParallaxScrollView from '@/components/parallax-scroll-view';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Link, useRouter } from 'expo-router';
+import React, { useState, useEffect, useCallback } from 'react';
+import { StyleSheet, View, TouchableOpacity, Alert } from 'react-native';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { useAuth } from '@/contexts/auth-context';
-import { supabase } from '@/lib/supabase';
+import { swipeHelpers } from '@/lib/db-helpers';
+import type { MockTitle } from '@/lib/mock-tmdb';
+import { SwipeCard } from '@/components/swipe-card';
+import { ThemedView } from '@/components/themed-view';
+import { ThemedText } from '@/components/themed-text';
+import { genreHelpers, streamingServiceHelpers, titleHelpers, feedHelpers, matchHelpers } from '@/lib/db-helpers';
 
-export default function HomeScreen() {
-  const { user, session, signOut } = useAuth();
+export default function SwipeScreen() {
+  const { user } = useAuth();
   const router = useRouter();
+  const [titles, setTitles] = useState<MockTitle[]>([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [hasPreferences, setHasPreferences] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
 
-  const handleSignOut = async () => {
+  useEffect(() => {
+    checkPreferences();
+  }, []);
+
+  useEffect(() => {
+    if (hasPreferences && user) {
+      loadTitles();
+    }
+  }, [hasPreferences, user]);
+
+  // Refresh titles when screen comes into focus (e.g., after preferences update)
+  useFocusEffect(
+    useCallback(() => {
+      if (hasPreferences && user) {
+        // Reset and reload titles to reflect any preference changes
+        loadTitles();
+      } else if (user) {
+        // Re-check preferences in case they were set
+        checkPreferences();
+      }
+    }, [hasPreferences, user])
+  );
+
+  const checkPreferences = async () => {
+    if (!user) return;
+
     try {
-      await signOut();
-      router.replace('/(auth)/login');
+      const [services, genres] = await Promise.all([
+        streamingServiceHelpers.getUserServices(user.id),
+        genreHelpers.getUserGenres(user.id),
+      ]);
+
+      if (services.length === 0 || genres.length === 0) {
+        setHasPreferences(false);
+        return;
+      }
+
+      setHasPreferences(true);
     } catch (error: any) {
-      Alert.alert('Error', error.message || 'Failed to sign out');
+      console.error('Error checking preferences:', error);
+
+      // Handle JWT clock sync errors gracefully
+      if (error?.code === 'PGRST303' || error?.message?.includes('JWT issued at future')) {
+        console.warn('JWT clock sync issue - will retry on check');
+        setTimeout(() => {
+          checkPreferences();
+        }, 2000);
+        return;
+      }
+
+      // Only show alert for non-clock-sync errors
+      if (error?.code !== 'PGRST303') {
+        Alert.alert('Error', 'Failed to load preferences');
+      }
     }
   };
 
-  const checkStoredSession = async () => {
+  const loadTitles = async () => {
+    if (!user) return;
+
+    setLoading(true);
     try {
-      const keys = await AsyncStorage.getAllKeys();
-      const supabaseKeys = keys.filter(key => key.includes('supabase'));
-      const sessionData = await AsyncStorage.getItem('supabase.auth.token');
-      
-      Alert.alert(
-        'Stored Session Info',
-        `Supabase keys found: ${supabaseKeys.length}\n` +
-        `Session data: ${sessionData ? 'Present' : 'Not found'}\n` +
-        `Keys: ${supabaseKeys.join(', ')}`
+      const [services, genres] = await Promise.all([
+        streamingServiceHelpers.getUserServices(user.id),
+        genreHelpers.getUserGenres(user.id),
+      ]);
+
+      // Fetch movies from TMDB via Edge Function
+      console.log('📡 Fetching movies from feed_movies...');
+      const feedResponse = await feedHelpers.getMovies({ limit: 20, page: 1 });
+      console.log(`📦 Received ${feedResponse.items.length} movies from feed`);
+
+      // Transform FeedMovie to MockTitle format
+      const fetchedTitles: MockTitle[] = feedResponse.items.map(movie => ({
+        id: movie.tmdb_id,
+        title: movie.title,
+        original_title: movie.title,
+        overview: movie.overview,
+        poster_path: movie.poster_path,
+        backdrop_path: null, // TMDB feed doesn't include backdrop_path
+        release_date: movie.release_date || undefined,
+        first_air_date: undefined,
+        vote_average: movie.vote_average || 0,
+        vote_count: movie.vote_count || 0,
+        popularity: movie.popularity || 0,
+        type: 'movie' as const,
+        genre_ids: [], // Genre IDs not included in feed response
+      }));
+
+      // Feed function already filters out swiped movies, but we'll keep the check for safety
+      const uniqueTitles = fetchedTitles.filter(
+        (title, index, self) =>
+          index === self.findIndex(t => t.id === title.id && t.type === title.type)
       );
+
+      setTitles(uniqueTitles);
+      setCurrentIndex(0);
+      setCurrentPage(1);
     } catch (error: any) {
-      Alert.alert('Error', error.message);
+      console.error('Error loading titles:', error);
+      console.error('Error details:', error?.details);
+      console.error('Error status:', error?.status);
+      console.error('Error response data:', error?.responseData);
+
+      const errorMessage = error?.message || error?.error || error?.responseData?.error || error?.responseData?.message || 'Failed to load titles';
+
+      if (errorMessage.includes('No providers selected') || errorMessage.includes('No genres selected')) {
+        setHasPreferences(false);
+        Alert.alert('Setup Required', errorMessage);
+      } else if (errorMessage.includes('TMDB_API_KEY not configured')) {
+        Alert.alert(
+          'Configuration Error',
+          'TMDB API key is not configured. Please check your Edge Functions setup.'
+        );
+      } else if (errorMessage.includes('Unauthorized') || errorMessage.includes('Invalid token')) {
+        Alert.alert('Authentication Error', 'Please sign in again.');
+      } else {
+        Alert.alert('Error', errorMessage);
+      }
+    } finally {
+      setLoading(false);
     }
   };
 
-  const testPersistence = async () => {
+  const handleSwipeRight = async () => {
+    if (!user || currentIndex >= titles.length) return;
+
+    const title = titles[currentIndex];
     try {
-      // Get current session
-      const { data: { session: currentSession } } = await supabase.auth.getSession();
-      
-      Alert.alert(
-        'Session Persistence Test',
-        `Current session: ${currentSession ? 'Active' : 'None'}\n` +
-        `User ID: ${currentSession?.user?.id || 'N/A'}\n` +
-        `Email: ${currentSession?.user?.email || 'N/A'}\n` +
-        `Expires: ${currentSession?.expires_at ? new Date(currentSession.expires_at * 1000).toLocaleString() : 'N/A'}`
-      );
-    } catch (error: any) {
-      Alert.alert('Error', error.message);
+      await titleHelpers.upsertTitle({
+        tmdb_id: title.id,
+        type: title.type,
+        title: title.title,
+        original_title: title.original_title,
+        poster_path: title.poster_path,
+        backdrop_path: title.backdrop_path,
+        overview: title.overview,
+        release_date: title.release_date,
+        first_air_date: title.first_air_date,
+        popularity: title.popularity,
+        vote_average: title.vote_average,
+        vote_count: title.vote_count,
+        adult: false,
+        metadata: { genre_ids: title.genre_ids },
+      });
+
+      console.log(`💾 Saving LIKE swipe: user_id=${user.id}, tmdb_id=${title.id}, type=${title.type}`);
+      const swipe = await swipeHelpers.createSwipe({
+        user_id: user.id,
+        tmdb_id: title.id,
+        type: title.type,
+        decision: 'like',
+      });
+      console.log(`✅ Swipe saved:`, { id: swipe.id, tmdb_id: swipe.tmdb_id, type: swipe.type, decision: swipe.decision });
+
+      try {
+        console.log(`💾 Creating match: user_id=${user.id}, tmdb_id=${title.id}, type=${title.type}`);
+        const match = await matchHelpers.createMatch(user.id, title.id, title.type);
+        console.log(`✅ Created match for ${title.title}:`, { match_id: match.id, tmdb_id: match.tmdb_id, type: match.type });
+      } catch (error: any) {
+        if (error?.code === '23505') {
+          console.log(`ℹ️ Match already exists for ${title.title} (${title.id})`);
+        } else {
+          console.error('❌ Error creating match:', error);
+        }
+      }
+
+      const nextIndex = currentIndex + 1;
+      setCurrentIndex(nextIndex);
+
+      if (nextIndex >= titles.length - 2 && nextIndex < titles.length) {
+        loadMoreTitles();
+      }
+    } catch (error) {
+      console.error('Error saving swipe:', error);
+      Alert.alert('Error', 'Failed to save swipe');
     }
   };
+
+  const handleSwipeLeft = async () => {
+    if (!user || currentIndex >= titles.length) return;
+
+    const title = titles[currentIndex];
+    try {
+      await titleHelpers.upsertTitle({
+        tmdb_id: title.id,
+        type: title.type,
+        title: title.title,
+        original_title: title.original_title,
+        poster_path: title.poster_path,
+        backdrop_path: title.backdrop_path,
+        overview: title.overview,
+        release_date: title.release_date,
+        first_air_date: title.first_air_date,
+        popularity: title.popularity,
+        vote_average: title.vote_average,
+        vote_count: title.vote_count,
+        adult: false,
+        metadata: { genre_ids: title.genre_ids },
+      });
+
+      console.log(`💾 Saving PASS swipe: user_id=${user.id}, tmdb_id=${title.id}, type=${title.type}`);
+      const swipe = await swipeHelpers.createSwipe({
+        user_id: user.id,
+        tmdb_id: title.id,
+        type: title.type,
+        decision: 'pass',
+      });
+      console.log(`✅ Swipe saved:`, { id: swipe.id, tmdb_id: swipe.tmdb_id, type: swipe.type, decision: swipe.decision });
+
+      try {
+        console.log(`🗑️ Removing match: user_id=${user.id}, tmdb_id=${title.id}, type=${title.type}`);
+        await matchHelpers.removeMatch(user.id, title.id, title.type);
+        console.log(`✅ Removed match for ${title.title} (${title.id})`);
+      } catch (error: any) {
+        if (error?.code === 'PGRST116') {
+          console.log(`ℹ️ No match to remove for ${title.title} (${title.id})`);
+        } else {
+          console.error('❌ Error removing match:', error);
+        }
+      }
+
+      const nextIndex = currentIndex + 1;
+      setCurrentIndex(nextIndex);
+
+      if (nextIndex >= titles.length - 2 && nextIndex < titles.length) {
+        loadMoreTitles();
+      }
+    } catch (error) {
+      console.error('Error saving swipe:', error);
+      Alert.alert('Error', 'Failed to save swipe');
+    }
+  };
+
+  const loadMoreTitles = async () => {
+    if (!user || loading) return;
+
+    try {
+      const nextPage = currentPage + 1;
+      const feedResponse = await feedHelpers.getMovies({ limit: 20, page: nextPage });
+
+      if (feedResponse.items.length === 0) {
+        return;
+      }
+
+      const newTitles: MockTitle[] = feedResponse.items.map(movie => ({
+        id: movie.tmdb_id,
+        title: movie.title,
+        original_title: movie.title,
+        overview: movie.overview,
+        poster_path: movie.poster_path,
+        backdrop_path: null,
+        release_date: movie.release_date || undefined,
+        first_air_date: undefined,
+        vote_average: movie.vote_average || 0,
+        vote_count: movie.vote_count || 0,
+        popularity: movie.popularity || 0,
+        type: 'movie' as const,
+        genre_ids: [],
+      }));
+
+      const existingIds = new Set(titles.map(t => `${t.type}-${t.id}`));
+      const uniqueNewTitles = newTitles.filter(
+        title => !existingIds.has(`${title.type}-${title.id}`)
+      );
+
+      if (uniqueNewTitles.length > 0) {
+        setTitles(prev => [...prev, ...uniqueNewTitles]);
+        setCurrentPage(nextPage);
+      }
+    } catch (error) {
+      console.error('Error loading more titles:', error);
+    }
+  };
+
+  if (!hasPreferences) {
+    return (
+      <ThemedView style={styles.container}>
+        <ThemedText type="title" style={styles.emptyTitle}>
+          Setup Required
+        </ThemedText>
+        <ThemedText style={styles.emptyText}>
+          Please select your streaming services and genre preferences to start swiping.
+        </ThemedText>
+        <TouchableOpacity
+          style={styles.setupButton}
+          onPress={() => router.push('/(authenticated)/(tabs)/preferences')}>
+          <ThemedText style={styles.setupButtonText}>Go to Preferences</ThemedText>
+        </TouchableOpacity>
+      </ThemedView>
+    );
+  }
+
+  if (loading) {
+    return (
+      <ThemedView style={styles.container}>
+        <ThemedText>Loading titles...</ThemedText>
+      </ThemedView>
+    );
+  }
+
+  if (titles.length === 0 || currentIndex >= titles.length) {
+    return (
+      <ThemedView style={styles.container}>
+        <ThemedText type="title" style={styles.emptyTitle}>
+          No More Titles
+        </ThemedText>
+        <ThemedText style={styles.emptyText}>
+          Check back later for more recommendations!
+        </ThemedText>
+        <TouchableOpacity style={styles.refreshButton} onPress={loadTitles}>
+          <ThemedText style={styles.refreshButtonText}>Refresh</ThemedText>
+        </TouchableOpacity>
+      </ThemedView>
+    );
+  }
+
+  // Top card must be titles[currentIndex] so tap/swipe handlers save the correct title.
+  // Don't reverse: first card (index 0) gets highest zIndex and is the one user sees and interacts with.
+  const visibleCards = titles
+    .slice(currentIndex, currentIndex + 3)
+    .map((title, index) => (
+      <SwipeCard
+        key={`${title.type}-${title.id}-${currentIndex + index}`}
+        title={title}
+        onSwipeLeft={handleSwipeLeft}
+        onSwipeRight={handleSwipeRight}
+        index={index}
+        total={Math.min(3, titles.length - currentIndex)}
+      />
+    ));
 
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
+    <ThemedView style={styles.container}>
+      <View style={styles.cardStack}>{visibleCards}</View>
 
-      {/* Auth Debug Info */}
-      <ThemedView style={styles.debugContainer}>
-        <ThemedText type="subtitle">Auth Status</ThemedText>
-        <ThemedText style={styles.debugText}>
-          Logged in: {user ? 'Yes' : 'No'}
-        </ThemedText>
-        {user && (
-          <>
-            <ThemedText style={styles.debugText}>
-              Email: {user.email || 'N/A'}
-            </ThemedText>
-            <ThemedText style={styles.debugText}>
-              User ID: {user.id}
-            </ThemedText>
-            <ThemedText style={styles.debugText}>
-              Session: {session ? 'Active' : 'None'}
-            </ThemedText>
-          </>
-        )}
-      </ThemedView>
-
-      {/* Test Buttons */}
-      <ThemedView style={styles.testContainer}>
-        <ThemedText type="subtitle">Test Auth & Persistence</ThemedText>
-        
-        <TouchableOpacity style={styles.testButton} onPress={testPersistence}>
-          <ThemedText style={styles.buttonText}>Test Session Persistence</ThemedText>
+      <View style={styles.actionButtons} collapsable={false}>
+        <TouchableOpacity style={[styles.actionButton, styles.passButton]} onPress={handleSwipeLeft}>
+          <ThemedText style={styles.actionButtonText}>✕</ThemedText>
         </TouchableOpacity>
-
-        <TouchableOpacity style={styles.testButton} onPress={checkStoredSession}>
-          <ThemedText style={styles.buttonText}>Check Stored Session</ThemedText>
+        <TouchableOpacity style={[styles.actionButton, styles.likeButton]} onPress={handleSwipeRight}>
+          <ThemedText style={styles.actionButtonText}>♥</ThemedText>
         </TouchableOpacity>
-
-        {user && (
-          <TouchableOpacity style={[styles.testButton, styles.signOutButton]} onPress={handleSignOut}>
-            <ThemedText style={styles.buttonText}>Sign Out</ThemedText>
-          </TouchableOpacity>
-        )}
-      </ThemedView>
-
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Testing Instructions</ThemedText>
-        <ThemedText>
-          1. Sign in with your account{'\n'}
-          2. Check session persistence - should show active session{'\n'}
-          3. Close and restart the app{'\n'}
-          4. You should still be logged in (persistence test){'\n'}
-          5. Sign out to test the full flow
-        </ThemedText>
-      </ThemedView>
-    </ParallaxScrollView>
+      </View>
+    </ThemedView>
   );
 }
 
 const styles = StyleSheet.create({
-  titleContainer: {
-    flexDirection: 'row',
+  container: {
+    flex: 1,
+    justifyContent: 'center',
     alignItems: 'center',
-    gap: 8,
+    padding: 20,
   },
-  stepContainer: {
-    gap: 8,
-    marginBottom: 8,
+  cardStack: {
+    flex: 1,
+    width: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  debugContainer: {
-    gap: 8,
+  emptyTitle: {
     marginBottom: 16,
-    padding: 16,
-    backgroundColor: 'rgba(0, 0, 0, 0.05)',
-    borderRadius: 8,
+    textAlign: 'center',
   },
-  debugText: {
-    fontSize: 14,
-    fontFamily: 'monospace',
+  emptyText: {
+    textAlign: 'center',
+    opacity: 0.7,
+    marginBottom: 24,
   },
-  testContainer: {
-    gap: 12,
-    marginBottom: 16,
-    padding: 16,
-    backgroundColor: 'rgba(0, 0, 0, 0.05)',
-    borderRadius: 8,
-  },
-  testButton: {
-    padding: 12,
+  refreshButton: {
+    paddingHorizontal: 24,
+    paddingVertical: 12,
     backgroundColor: '#0a7ea4',
     borderRadius: 8,
-    alignItems: 'center',
   },
-  signOutButton: {
-    backgroundColor: '#dc3545',
-    marginTop: 8,
-  },
-  buttonText: {
+  refreshButtonText: {
     color: '#fff',
-    fontSize: 16,
     fontWeight: '600',
   },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
+  setupButton: {
+    marginTop: 24,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    backgroundColor: '#0a7ea4',
+    borderRadius: 8,
+  },
+  setupButtonText: {
+    color: '#fff',
+    fontWeight: '600',
+  },
+  actionButtons: {
+    flexDirection: 'row',
+    direction: 'ltr',
+    justifyContent: 'center',
+    gap: 40,
+    paddingVertical: 20,
+  },
+  actionButton: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  passButton: {
+    backgroundColor: '#ff4444',
+  },
+  likeButton: {
+    backgroundColor: '#44ff44',
+  },
+  actionButtonText: {
+    fontSize: 24,
+    color: '#fff',
+    fontWeight: 'bold',
   },
 });

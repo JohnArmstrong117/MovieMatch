@@ -40,7 +40,24 @@ If the Swipe screen loads but shows "No More Titles":
 2. Check if you've already swiped on all available mock titles
 3. Try refreshing or resetting the app
 
-### 5. App Crashes or Errors
+### 5. 503 / "Invalid Refresh Token" / App Stuck
+If you see **503** or **Invalid Refresh Token: Refresh Token Not Found** when opening the app:
+
+1. **Supabase was restarted** – Stored refresh tokens are no longer valid. The app will clear session and show the login screen; **sign in again**.
+2. **Supabase not running** – Start it: `cd` to project root, run `supabase start`. Then reload the app.
+3. **"Route named login not handled"** – Fixed in app: we use a declarative redirect. Reload the app after pulling the fix.
+
+### 6. "Could not find the table 'user_genres' / 'tmdb_providers_movie'"
+PostgREST’s schema cache is missing those tables (e.g. after Supabase restart from an old backup). **Apply migrations:**
+
+```bash
+cd path/to/MovieMatch
+supabase db reset
+```
+
+Then reload the app and sign in again (DB was recreated). To keep existing data, run only pending migrations instead: `supabase migration up` (if linked) or run the SQL from `supabase/migrations/20240102000002_tmdb_views_functions.sql` in Supabase Studio → SQL Editor.
+
+### 7. App Crashes or Other Errors
 Check the terminal for error messages. Common issues:
 
 - **Database connection errors**: Make sure Supabase is running (`supabase start`)

@@ -58,7 +58,7 @@ export default function MatchesScreen() {
         }
       }
 
-      // Load matches with title data
+      // Load from matches_with_titles view (likes only – swipes where decision='like')
       const matchesData = await matchHelpers.getMatchesWithTitles(user.id);
       setMatches(matchesData);
       console.log(`✅ Loaded ${matchesData.length} matches`);
@@ -75,9 +75,22 @@ export default function MatchesScreen() {
     await loadMatches();
   };
 
-  const handleToggleWatched = async (matchId: string, currentWatched: boolean) => {
+  const handleToggleWatched = async (
+    matchId: string | null,
+    currentWatched: boolean,
+    tmdbId?: number,
+    type?: 'movie' | 'tv'
+  ) => {
+    if (!user) return;
     try {
-      await matchHelpers.updateMatch(matchId, { watched: !currentWatched });
+      let id = matchId;
+      if (!id && tmdbId != null && type) {
+        const match = await matchHelpers.createMatch(user.id, tmdbId, type);
+        id = match.id;
+      }
+      if (id) {
+        await matchHelpers.updateMatch(id, { watched: !currentWatched });
+      }
       await loadMatches();
     } catch (error) {
       console.error('Error updating match:', error);
@@ -109,7 +122,7 @@ export default function MatchesScreen() {
     <ThemedView style={styles.container}>
       <FlatList
         data={matches}
-        keyExtractor={(item) => item.id}
+        keyExtractor={(item) => item.id ?? `${item.tmdb_id}-${item.type}`}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
@@ -122,7 +135,9 @@ export default function MatchesScreen() {
           return (
             <TouchableOpacity
               style={styles.matchCard}
-              onPress={() => handleToggleWatched(item.id, item.watched)}>
+              onPress={() =>
+                handleToggleWatched(item.id, item.watched, item.tmdb_id, item.type)
+              }>
               {posterUrl ? (
                 <Image
                   source={{ uri: posterUrl }}
@@ -173,6 +188,7 @@ export default function MatchesScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    paddingTop: 16,
   },
   listContent: {
     padding: 16,

@@ -42,8 +42,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const checkAuthState = async () => {
     try {
       const { data: { session }, error } = await supabase.auth.getSession();
-      if (error) throw error;
-      
+      if (error) {
+        // Invalid/expired refresh token (e.g. after Supabase restart) – clear local session so user can sign in again
+        if (error.message?.includes('Refresh Token') || error.message?.includes('refresh_token')) {
+          try {
+            await supabase.auth.signOut();
+          } catch (_) {
+            // Ignore signOut errors; we still clear state below
+          }
+        }
+        setSession(null);
+        setUser(null);
+        return;
+      }
       setSession(session);
       setUser(session?.user ?? null);
     } catch (error) {

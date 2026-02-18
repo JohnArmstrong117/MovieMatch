@@ -35,7 +35,7 @@ export function SwipeCard({ title, onSwipeLeft, onSwipeRight, index, total }: Sw
   const scale = useSharedValue(1);
   const opacity = useSharedValue(1);
 
-  const isTopCard = index === total - 1;
+  const isTopCard = index === 0;
 
   const panGesture = Gesture.Pan()
     .enabled(isTopCard)

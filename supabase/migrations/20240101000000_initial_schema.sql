@@ -1,5 +1,5 @@
--- Enable UUID extension
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+-- Enable UUID extension (optional; we use gen_random_uuid() for portability on Supabase)
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA public;
 
 -- Create profiles table (extends auth.users)
 CREATE TABLE public.profiles (
@@ -12,7 +12,7 @@ CREATE TABLE public.profiles (
 
 -- Create streaming_services table (seed data)
 CREATE TABLE public.streaming_services (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL UNIQUE,
   provider_key TEXT NOT NULL UNIQUE, -- TMDB provider ID or external API ID
   logo_url TEXT, -- Optional: URL to service logo
@@ -30,7 +30,7 @@ CREATE TABLE public.user_streaming_services (
 
 -- Create genres table (seed data)
 CREATE TABLE public.genres (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name TEXT NOT NULL UNIQUE,
   external_id INTEGER NOT NULL UNIQUE, -- TMDB genre ID
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -47,7 +47,7 @@ CREATE TABLE public.user_genre_prefs (
 
 -- Create titles cache table (optional but recommended)
 CREATE TABLE public.titles (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tmdb_id INTEGER NOT NULL UNIQUE,
   type TEXT NOT NULL CHECK (type IN ('movie', 'tv')),
   title TEXT NOT NULL,
@@ -69,7 +69,7 @@ CREATE TABLE public.titles (
 
 -- Create swipes table
 CREATE TABLE public.swipes (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   tmdb_id INTEGER NOT NULL,
   type TEXT NOT NULL CHECK (type IN ('movie', 'tv')),
@@ -80,7 +80,7 @@ CREATE TABLE public.swipes (
 
 -- Create matches table (for liked items with optional metadata)
 CREATE TABLE public.matches (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   tmdb_id INTEGER NOT NULL,
   type TEXT NOT NULL CHECK (type IN ('movie', 'tv')),

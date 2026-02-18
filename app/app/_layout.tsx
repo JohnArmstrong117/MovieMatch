@@ -1,5 +1,5 @@
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { Stack, useSegments, useRootNavigationState } from 'expo-router';
+import { Stack, Redirect, useSegments, useRootNavigationState } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import 'react-native-reanimated';
@@ -19,18 +19,19 @@ function InitialRouteHandler() {
   const router = useRouter();
   const rootNavigationState = useRootNavigationState();
 
+  const inAuthGroup = segments[0] === '(auth)';
+
   useEffect(() => {
     if (loading || !rootNavigationState?.key) return;
-
-    const inAuthGroup = segments[0] === '(auth)';
-    const inAuthenticatedGroup = segments[0] === '(authenticated)';
-
-    if (!user && !inAuthGroup) {
-      router.replace('/(auth)/login');
-    } else if (user && inAuthGroup) {
+    if (user && inAuthGroup) {
       router.replace('/(authenticated)/(tabs)');
     }
   }, [user, loading, segments, rootNavigationState?.key]);
+
+  // Redirect to login when not authenticated (after all hooks so hook count is stable)
+  if (!loading && rootNavigationState?.key && !user && !inAuthGroup) {
+    return <Redirect href="/(auth)/login" />;
+  }
 
   return null;
 }

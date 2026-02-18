@@ -54,19 +54,24 @@ export default function PreferencesScreen() {
 
     setLoading(true);
     try {
-      const [allServices, userServicesData, allGenres, userGenresData, profile] =
-        await Promise.all([
-          streamingServiceHelpers.getAll(),
-          streamingServiceHelpers.getUserServices(user.id),
-          genreHelpers.getAll(),
-          genreHelpers.getUserGenres(user.id),
-          profileHelpers.getProfile(user.id),
-        ]);
+      let allServices = await streamingServiceHelpers.getAll();
+      // After db reset providers table is empty; pull from TMDB via Edge Function
+      if (allServices.length === 0) {
+        await streamingServiceHelpers.syncFromTMDB();
+        allServices = await streamingServiceHelpers.getAll();
+      }
+
+      const [userServicesData, allGenres, userGenresData, profile] = await Promise.all([
+        streamingServiceHelpers.getUserServices(user.id),
+        genreHelpers.getAll(),
+        genreHelpers.getUserGenres(user.id),
+        profileHelpers.getProfile(user.id),
+      ]);
 
       setStreamingServices(allServices || []);
-      setUserServices((userServicesData || []).map(p => p.provider_id));
+      setUserServices((userServicesData || []).map((p: TMDBProvider) => p.provider_id));
       setGenres(allGenres || []);
-      setUserGenres((userGenresData || []).map(g => g.genre_id));
+      setUserGenres((userGenresData || []).map((g: TMDBGenre) => g.genre_id));
       setCountryCode(profile?.country_code || '');
     } catch (error: any) {
       console.error('Error loading preferences:', error);
