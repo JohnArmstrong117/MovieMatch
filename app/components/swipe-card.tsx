@@ -25,11 +25,12 @@ interface SwipeCardProps {
   title: MockTitle;
   onSwipeLeft: () => void;
   onSwipeRight: () => void;
+  onDoubleTap?: () => void;
   index: number;
   total: number;
 }
 
-export function SwipeCard({ title, onSwipeLeft, onSwipeRight, index, total }: SwipeCardProps) {
+export function SwipeCard({ title, onSwipeLeft, onSwipeRight, onDoubleTap, index, total }: SwipeCardProps) {
   const translateX = useSharedValue(0);
   const translateY = useSharedValue(0);
   const scale = useSharedValue(1);
@@ -37,13 +38,41 @@ export function SwipeCard({ title, onSwipeLeft, onSwipeRight, index, total }: Sw
 
   const isTopCard = index === 0;
 
+  const triggerHaptic = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+  };
+
+  const triggerSwipeRight = () => {
+    requestAnimationFrame(() => {
+      onSwipeRight();
+    });
+  };
+
+  const triggerSwipeLeft = () => {
+    requestAnimationFrame(() => {
+      onSwipeLeft();
+    });
+  };
+
+  const triggerDoubleTap = () => {
+    if (onDoubleTap) {
+      requestAnimationFrame(() => onDoubleTap());
+    }
+  };
+
+  const doubleTapGesture = Gesture.Tap()
+    .enabled(isTopCard && !!onDoubleTap)
+    .numberOfTaps(2)
+    .onEnd(() => {
+      runOnJS(triggerDoubleTap)();
+    });
+
   const panGesture = Gesture.Pan()
     .enabled(isTopCard)
     .onUpdate((event) => {
       translateX.value = event.translationX;
       translateY.value = event.translationY;
 
-      // Add rotation based on swipe
       const rotation = interpolate(
         translateX.value,
         [-SCREEN_WIDTH / 2, 0, SCREEN_WIDTH / 2],
@@ -61,26 +90,24 @@ export function SwipeCard({ title, onSwipeLeft, onSwipeRight, index, total }: Sw
       const swipeDistance = event.translationX;
 
       if (Math.abs(swipeDistance) > SWIPE_THRESHOLD) {
-        // Swipe detected
         const direction = swipeDistance > 0 ? 'right' : 'left';
         translateX.value = withSpring(direction === 'right' ? SCREEN_WIDTH : -SCREEN_WIDTH);
+        runOnJS(triggerHaptic)();
         opacity.value = withSpring(0, {}, () => {
           if (direction === 'right') {
-            runOnJS(onSwipeRight)();
+            runOnJS(triggerSwipeRight)();
           } else {
-            runOnJS(onSwipeLeft)();
+            runOnJS(triggerSwipeLeft)();
           }
         });
-
-        // Haptic feedback
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       } else {
-        // Return to center
         translateX.value = withSpring(0);
         translateY.value = withSpring(0);
         scale.value = withSpring(1);
       }
     });
+
+  const composedGesture = Gesture.Race(panGesture, doubleTapGesture);
 
   const animatedCardStyle = useAnimatedStyle(() => {
     const rotation = interpolate(
@@ -127,7 +154,7 @@ export function SwipeCard({ title, onSwipeLeft, onSwipeRight, index, total }: Sw
     : null;
 
   return (
-    <GestureDetector gesture={panGesture}>
+    <GestureDetector gesture={composedGesture}>
       <Animated.View style={[styles.card, animatedCardStyle]}>
         {/* Card content */}
         <ThemedView style={styles.cardContent}>

@@ -96,3 +96,12 @@ export function getSupabaseClient(): SupabaseClient {
 // Export the client instance for convenience
 export const supabase = getSupabaseClient();
 
+/** Supabase project URL (for direct fetch to Edge Functions, etc.) */
+export function getSupabaseUrl(): string {
+  return getLocalNetworkUrl();
+}
+
+/** Supabase anon key (use for Edge Function calls when session JWT causes 401) */
+export function getSupabaseAnonKey(): string {
+  return supabaseAnonKey;
+}

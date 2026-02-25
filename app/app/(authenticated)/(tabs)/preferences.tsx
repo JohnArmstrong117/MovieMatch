@@ -149,10 +149,10 @@ export default function PreferencesScreen() {
         }
       }
 
-      // Update profile country code if changed
-      if (countryCode) {
-        await profileHelpers.updateProfile(user.id, { country_code: countryCode });
-      }
+      // Update profile country code
+      await profileHelpers.updateProfile(user.id, {
+        country_code: countryCode || null,
+      });
 
       Alert.alert('Success', 'Preferences saved! Your movie feed will refresh when you return to the swipe screen.');
     } catch (error) {
@@ -173,7 +173,21 @@ export default function PreferencesScreen() {
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ThemedView style={styles.container}>
+      <ThemedView style={styles.topBar}>
+        <ThemedText type="subtitle" style={styles.screenTitle}>Preferences</ThemedText>
+        <TouchableOpacity
+          style={[styles.saveButtonSmall, saving && styles.saveButtonDisabled]}
+          onPress={handleSave}
+          disabled={saving}>
+          {saving ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <ThemedText style={styles.saveButtonTextSmall}>Save</ThemedText>
+          )}
+        </TouchableOpacity>
+      </ThemedView>
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
       <ThemedView style={styles.section}>
         <ThemedText type="subtitle" style={styles.sectionTitle}>
           Favorite Genres
@@ -256,18 +270,8 @@ export default function PreferencesScreen() {
           </ThemedText>
         )}
       </ThemedView>
-
-      <TouchableOpacity
-        style={[styles.saveButton, saving && styles.saveButtonDisabled]}
-        onPress={handleSave}
-        disabled={saving}>
-        {saving ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <ThemedText style={styles.saveButtonText}>Save Preferences</ThemedText>
-        )}
-      </TouchableOpacity>
-    </ScrollView>
+      </ScrollView>
+    </ThemedView>
   );
 }
 
@@ -275,8 +279,39 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#ddd',
+  },
+  screenTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+  },
+  saveButtonSmall: {
+    backgroundColor: '#0a7ea4',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    minWidth: 72,
+    alignItems: 'center',
+  },
+  saveButtonTextSmall: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  scroll: {
+    flex: 1,
+  },
   content: {
     padding: 20,
+    paddingBottom: 32,
   },
   loadingText: {
     marginTop: 16,
@@ -343,21 +378,8 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: '600',
   },
-  saveButton: {
-    backgroundColor: '#0a7ea4',
-    paddingVertical: 16,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginTop: 8,
-    marginBottom: 32,
-  },
   saveButtonDisabled: {
     opacity: 0.6,
-  },
-  saveButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
   },
 });
 

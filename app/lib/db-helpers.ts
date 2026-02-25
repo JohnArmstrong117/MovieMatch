@@ -59,6 +59,296 @@ export const profileHelpers = {
     if (error) throw error;
     return data;
   },
+
+  /**
+   * Upload a profile picture from a local file URI (e.g. from expo-image-picker).
+   * Uploads to storage at avatars/{userId}/avatar.{ext}, updates profile.avatar_url, returns public URL.
+   */
+  async uploadAvatar(userId: string, fileUri: string, mimeType: string = 'image/jpeg'): Promise<string> {
+    const ext = mimeType === 'image/png' ? 'png' : mimeType === 'image/webp' ? 'webp' : mimeType === 'image/gif' ? 'gif' : 'jpg';
+    const path = `${userId}/avatar.${ext}`;
+
+    const response = await fetch(fileUri);
+    const blob = await response.blob();
+
+    const { error: uploadError } = await supabase.storage
+      .from('avatars')
+      .upload(path, blob, { contentType: mimeType, upsert: true });
+
+    if (uploadError) throw uploadError;
+
+    const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(path);
+    const publicUrl = urlData.publicUrl;
+
+    await this.updateProfile(userId, { avatar_url: publicUrl });
+    return publicUrl;
+  },
+};
+
+export type FriendRequest = Tables<'friend_requests'>;
+
+export type FriendWithProfile = {
+  id: string;
+  display_name: string | null;
+  avatar_url: string | null;
+  request_id: string;
+  created_at: string;
+};
+
+export type PendingRequestWithProfile = {
+  id: string;
+  display_name: string | null;
+  request_id: string;
+  created_at: string;
+  direction: 'incoming' | 'outgoing';
+};
+
+/**
+ * Friends helpers
+ */
+export const friendHelpers = {
+  /** List of accepted friends (other user id + display_name) */
+  async getFriends(userId: string): Promise<FriendWithProfile[]> {
+    const { data, error } = await supabase
+      .from('friend_requests')
+      .select('id, from_user_id, to_user_id, created_at')
+      .or(`from_user_id.eq.${userId},to_user_id.eq.${userId}`)
+      .eq('status', 'accepted');
+    if (error) throw error;
+    const list = (data || []) as { id: string; from_user_id: string; to_user_id: string; created_at: string }[];
+    const friendIds = list.map((r) => (r.from_user_id === userId ? r.to_user_id : r.from_user_id));
+    if (friendIds.length === 0) return [];
+    const { data: profiles, error: profError } = await supabase
+      .from('profiles')
+      .select('id, display_name, avatar_url')
+      .in('id', friendIds);
+    if (profError) throw profError;
+    const byId = new Map((profiles || []).map((p) => [p.id, p]));
+    return list.map((r) => {
+      const friendId = r.from_user_id === userId ? r.to_user_id : r.from_user_id;
+      const p = byId.get(friendId);
+      return {
+        id: friendId,
+        display_name: p?.display_name ?? null,
+        avatar_url: p?.avatar_url ?? null,
+        request_id: r.id,
+        created_at: r.created_at,
+      };
+    });
+  },
+
+  /** Pending requests received (others want to be friends with me) */
+  async getPendingReceived(userId: string): Promise<PendingRequestWithProfile[]> {
+    const { data, error } = await supabase
+      .from('friend_requests')
+      .select('id, from_user_id, created_at')
+      .eq('to_user_id', userId)
+      .eq('status', 'pending');
+    if (error) throw error;
+    const list = (data || []) as { id: string; from_user_id: string; created_at: string }[];
+    if (list.length === 0) return [];
+    const ids = list.map((r) => r.from_user_id);
+    const { data: profiles } = await supabase.from('profiles').select('id, display_name').in('id', ids);
+    const byId = new Map((profiles || []).map((p) => [p.id, p]));
+    return list.map((r) => {
+      const p = byId.get(r.from_user_id);
+      return {
+        id: r.from_user_id,
+        display_name: p?.display_name ?? null,
+        request_id: r.id,
+        created_at: r.created_at,
+        direction: 'incoming' as const,
+      };
+    });
+  },
+
+  /** Pending requests sent (I requested them) */
+  async getPendingSent(userId: string): Promise<PendingRequestWithProfile[]> {
+    const { data, error } = await supabase
+      .from('friend_requests')
+      .select('id, to_user_id, created_at')
+      .eq('from_user_id', userId)
+      .eq('status', 'pending');
+    if (error) throw error;
+    const list = (data || []) as { id: string; to_user_id: string; created_at: string }[];
+    if (list.length === 0) return [];
+    const ids = list.map((r) => r.to_user_id);
+    const { data: profiles } = await supabase.from('profiles').select('id, display_name').in('id', ids);
+    const byId = new Map((profiles || []).map((p) => [p.id, p]));
+    return list.map((r) => {
+      const p = byId.get(r.to_user_id);
+      return {
+        id: r.to_user_id,
+        display_name: p?.display_name ?? null,
+        request_id: r.id,
+        created_at: r.created_at,
+        direction: 'outgoing' as const,
+      };
+    });
+  },
+
+  /** Search users by display_name (for adding friends). Excludes self and existing friends/pending. */
+  async searchByDisplayName(userId: string, query: string, limit = 20): Promise<{ id: string; display_name: string | null }[]> {
+    const q = query.trim();
+    if (!q) return [];
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('id, display_name')
+      .neq('id', userId)
+      .ilike('display_name', `%${q}%`);
+    if (error) throw error;
+    let results = (data || []).slice(0, limit);
+    const { data: existing } = await supabase
+      .from('friend_requests')
+      .select('from_user_id, to_user_id')
+      .or(`from_user_id.eq.${userId},to_user_id.eq.${userId}`);
+    const existingIds = new Set(
+      (existing || []).flatMap((r: { from_user_id: string; to_user_id: string }) =>
+        r.from_user_id === userId ? [r.to_user_id] : [r.from_user_id]
+      )
+    );
+    return results.filter((p) => !existingIds.has(p.id));
+  },
+
+  async sendRequest(fromUserId: string, toUserId: string): Promise<void> {
+    if (fromUserId === toUserId) throw new Error('Cannot send request to yourself');
+    const { error } = await supabase.from('friend_requests').insert({
+      from_user_id: fromUserId,
+      to_user_id: toUserId,
+      status: 'pending',
+    });
+    if (error) throw error;
+  },
+
+  async acceptRequest(requestId: string, userId: string): Promise<void> {
+    const { error } = await supabase
+      .from('friend_requests')
+      .update({ status: 'accepted', updated_at: new Date().toISOString() })
+      .eq('id', requestId)
+      .eq('to_user_id', userId);
+    if (error) throw error;
+  },
+
+  async rejectRequest(requestId: string, userId: string): Promise<void> {
+    const { error } = await supabase
+      .from('friend_requests')
+      .update({ status: 'rejected', updated_at: new Date().toISOString() })
+      .eq('id', requestId)
+      .eq('to_user_id', userId);
+    if (error) throw error;
+  },
+
+  /** Cancel a request I sent */
+  async cancelRequest(requestId: string, userId: string): Promise<void> {
+    const { error } = await supabase
+      .from('friend_requests')
+      .delete()
+      .eq('id', requestId)
+      .eq('from_user_id', userId);
+    if (error) throw error;
+  },
+
+  /** Remove a friend (delete the accepted request) */
+  async removeFriend(userId: string, friendId: string): Promise<void> {
+    const { data: row } = await supabase
+      .from('friend_requests')
+      .select('id')
+      .eq('status', 'accepted')
+      .or(`and(from_user_id.eq.${userId},to_user_id.eq.${friendId}),and(from_user_id.eq.${friendId},to_user_id.eq.${userId})`)
+      .maybeSingle();
+    if (!row) throw new Error('Friend request not found');
+    const { error } = await supabase.from('friend_requests').delete().eq('id', row.id);
+    if (error) throw error;
+  },
+
+  /** Shared matches with a friend (titles in both users' match lists). Same row shape as get_liked_matches_with_titles. */
+  async getSharedMatchesWithFriend(userId: string, friendId: string): Promise<any[]> {
+    const { data, error } = await supabase.rpc('get_shared_matches_with_friend', {
+      p_user_id: userId,
+      p_friend_id: friendId,
+    });
+    if (error) throw error;
+    return (data ?? []) as any[];
+  },
+
+  /** Titles the user has already recommended to this friend (tmdb_id + type). */
+  async getRecommendationsSentToFriend(fromUserId: string, toUserId: string): Promise<{ tmdb_id: number; type: string }[]> {
+    const { data, error } = await supabase
+      .from('recommendations')
+      .select('tmdb_id, type')
+      .eq('from_user_id', fromUserId)
+      .eq('to_user_id', toUserId);
+    if (error) throw error;
+    return (data ?? []) as { tmdb_id: number; type: string }[];
+  },
+
+  /** Recommend a title (from your matches) to a friend. Fails if not friends. Optional short message to the friend. */
+  async sendRecommendation(
+    fromUserId: string,
+    toUserId: string,
+    tmdbId: number,
+    type: 'movie' | 'tv',
+    message?: string | null
+  ): Promise<void> {
+    const payload: Record<string, unknown> = {
+      from_user_id: fromUserId,
+      to_user_id: toUserId,
+      tmdb_id: tmdbId,
+      type,
+    };
+    const trimmed = typeof message === 'string' ? message.trim() : '';
+    if (trimmed) payload.message = trimmed;
+    const { error } = await supabase.from('recommendations').insert(payload);
+    if (error) throw error;
+  },
+
+  /** Recommendations received by the user (inbox), with sender name and title info. */
+  async getRecommendationsReceived(userId: string): Promise<RecommendationReceived[]> {
+    const { data, error } = await supabase.rpc('get_recommendations_received', {
+      p_user_id: userId,
+    });
+    if (error) throw error;
+    return (data ?? []) as RecommendationReceived[];
+  },
+
+  /** Count of recommendations received since the given ISO timestamp (for inbox badge). If since is null, returns total. */
+  async getRecommendationsReceivedUnreadCount(userId: string, sinceIso: string | null): Promise<number> {
+    const { data, error } = await supabase.rpc('get_recommendations_received_unread_count', {
+      p_user_id: userId,
+      p_since: sinceIso,
+    });
+    if (error) throw error;
+    return typeof data === 'number' ? data : 0;
+  },
+
+  /** Count of pending friend requests received (for Friends tab badge). */
+  async getPendingReceivedCount(userId: string): Promise<number> {
+    const { count, error } = await supabase
+      .from('friend_requests')
+      .select('id', { count: 'exact', head: true })
+      .eq('to_user_id', userId)
+      .eq('status', 'pending');
+    if (error) throw error;
+    return count ?? 0;
+  },
+};
+
+export type RecommendationReceived = {
+  id: string;
+  from_user_id: string;
+  from_user_display_name: string | null;
+  tmdb_id: number;
+  type: string;
+  created_at: string;
+  message: string | null;
+  title: string | null;
+  original_title: string | null;
+  poster_path: string | null;
+  backdrop_path: string | null;
+  overview: string | null;
+  release_date: string | null;
+  first_air_date: string | null;
+  vote_average: number | null;
 };
 
 /**
@@ -328,17 +618,18 @@ export const matchHelpers = {
 
   /**
    * Load the user's matches (likes only) with title data.
-   * Uses RPC when available; otherwise builds list purely from swipes where decision = 'like'
-   * (no view), so wrong films never appear even if the DB view or matches table is stale.
+   * Optional type filter: 'movie' | 'tv' to show only movies or only TV shows.
+   * Uses RPC when available; otherwise builds list purely from swipes where decision = 'like'.
    */
-  async getMatchesWithTitles(userId: string) {
+  async getMatchesWithTitles(userId: string, type?: 'movie' | 'tv') {
     const { data, error } = await supabase.rpc('get_liked_matches_with_titles', {
       p_user_id: userId,
+      p_type: type ?? null,
     });
     if (!error) return (data ?? []) as any[];
-    // RPC not found — build from swipes only (single source of truth: decision = 'like')
+    // RPC not found (e.g. old signature) — fallback
     if (error.code === 'PGRST202') {
-      return this.getMatchesWithTitlesFromLikesOnly(userId);
+      return this.getMatchesWithTitlesFromLikesOnly(userId, type);
     }
     throw error;
   },
@@ -347,13 +638,17 @@ export const matchHelpers = {
    * Build matches list only from swipes where decision = 'like'. Does not use the view.
    * Guarantees only liked titles appear regardless of matches table or view state.
    */
-  async getMatchesWithTitlesFromLikesOnly(userId: string): Promise<any[]> {
-    const { data: likes, error: likesErr } = await supabase
+  async getMatchesWithTitlesFromLikesOnly(userId: string, type?: 'movie' | 'tv'): Promise<any[]> {
+    let query = supabase
       .from('swipes')
       .select('tmdb_id, type, created_at')
       .eq('user_id', userId)
       .eq('decision', 'like')
       .order('created_at', { ascending: false });
+    if (type) {
+      query = query.eq('type', type);
+    }
+    const { data: likes, error: likesErr } = await query;
     if (likesErr) throw likesErr;
     if (!likes?.length) return [];
 
@@ -370,7 +665,7 @@ export const matchHelpers = {
     );
     const { data: titleRows, error: titlesErr } = await supabase
       .from('titles')
-      .select('tmdb_id, type, title, original_title, poster_path, backdrop_path, overview, release_date, first_air_date, popularity, vote_average, vote_count')
+      .select('tmdb_id, type, title, original_title, poster_path, backdrop_path, overview, release_date, first_air_date, popularity, vote_average, vote_count, metadata')
       .or(orParts.join(','));
     if (titlesErr) throw titlesErr;
     const titleMap = new Map<string, any>();
@@ -380,6 +675,8 @@ export const matchHelpers = {
       const key = `${normTmdbId(s.tmdb_id)}-${normType(s.type)}`;
       const m = matchMap.get(key);
       const t = titleMap.get(key);
+      const meta = t?.metadata;
+      const genreIds = Array.isArray(meta?.genre_ids) ? meta.genre_ids : [];
       return {
         id: m?.id ?? null,
         user_id: userId,
@@ -400,6 +697,7 @@ export const matchHelpers = {
         popularity: t?.popularity ?? null,
         vote_average: t?.vote_average ?? null,
         vote_count: t?.vote_count ?? null,
+        genre_ids: genreIds,
       };
     });
   },
@@ -414,6 +712,38 @@ export const matchHelpers = {
     
     if (error) throw error;
     return data;
+  },
+
+  /**
+   * Returns true if the user already has this title in their matches (liked).
+   */
+  async hasMatch(userId: string, tmdbId: number, type: 'movie' | 'tv'): Promise<boolean> {
+    const tid = normTmdbId(tmdbId);
+    const t = normType(type);
+    const { data, error } = await supabase
+      .from('matches')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('tmdb_id', tid)
+      .eq('type', t)
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    return data != null;
+  },
+
+  /**
+   * Add a title to the user's matches from inbox (record like swipe + match).
+   * Safe to call if already in matches (no-op / idempotent).
+   */
+  async addToMatchesFromInbox(userId: string, tmdbId: number, type: 'movie' | 'tv'): Promise<void> {
+    await swipeHelpers.createSwipe({
+      user_id: userId,
+      tmdb_id: tmdbId,
+      type,
+      decision: 'like',
+    });
+    await this.createMatch(userId, tmdbId, type);
   },
 
   /**
@@ -541,9 +871,11 @@ export interface FeedMovie {
   poster_path: string | null;
   overview: string;
   release_date: string | null;
+  first_air_date?: string | null;
   popularity: number | null;
   vote_average: number | null;
   vote_count: number | null;
+  genre_ids?: number[];
 }
 
 export interface FeedMoviesResponse {
@@ -553,13 +885,23 @@ export interface FeedMoviesResponse {
 
 export const feedHelpers = {
   async getMovies(options: { limit?: number; page?: number } = {}): Promise<FeedMoviesResponse> {
+    return this.getFeed({ ...options, type: 'movie' });
+  },
+
+  async getTv(options: { limit?: number; page?: number } = {}): Promise<FeedMoviesResponse> {
+    return this.getFeed({ ...options, type: 'tv' });
+  },
+
+  async getFeed(options: { type?: 'movie' | 'tv'; limit?: number; page?: number } = {}): Promise<FeedMoviesResponse> {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) {
       throw new Error('Not authenticated');
     }
 
+    const type = options.type === 'tv' ? 'tv' : 'movie';
     const response = await supabase.functions.invoke('feed_movies', {
       body: {
+        type,
         limit: options.limit || 20,
         page: options.page || 1,
         includeRentBuy: true,

@@ -5,18 +5,23 @@ import { useAuth } from '@/contexts/auth-context';
 import { swipeHelpers } from '@/lib/db-helpers';
 import type { MockTitle } from '@/lib/mock-tmdb';
 import { SwipeCard } from '@/components/swipe-card';
+import { MovieDetailModal } from '@/components/movie-detail-modal';
 import { ThemedView } from '@/components/themed-view';
 import { ThemedText } from '@/components/themed-text';
 import { genreHelpers, streamingServiceHelpers, titleHelpers, feedHelpers, matchHelpers } from '@/lib/db-helpers';
+import { MediaTypeToggle } from '@/components/media-type-toggle';
 
 export default function SwipeScreen() {
   const { user } = useAuth();
   const router = useRouter();
+  const [mediaType, setMediaType] = useState<'movie' | 'tv'>('movie');
   const [titles, setTitles] = useState<MockTitle[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [hasPreferences, setHasPreferences] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
+  const [detailVisible, setDetailVisible] = useState(false);
+  const [selectedTitle, setSelectedTitle] = useState<MockTitle | null>(null);
 
   useEffect(() => {
     checkPreferences();
@@ -26,19 +31,19 @@ export default function SwipeScreen() {
     if (hasPreferences && user) {
       loadTitles();
     }
-  }, [hasPreferences, user]);
+  }, [hasPreferences, user, mediaType]);
 
   // Refresh titles when screen comes into focus (e.g., after preferences update)
   useFocusEffect(
     useCallback(() => {
       if (hasPreferences && user) {
-        // Reset and reload titles to reflect any preference changes
+        // Reset and reload titles for current media type (movies or TV)
         loadTitles();
       } else if (user) {
         // Re-check preferences in case they were set
         checkPreferences();
       }
-    }, [hasPreferences, user])
+    }, [hasPreferences, user, mediaType])
   );
 
   const checkPreferences = async () => {
@@ -85,26 +90,26 @@ export default function SwipeScreen() {
         genreHelpers.getUserGenres(user.id),
       ]);
 
-      // Fetch movies from TMDB via Edge Function
-      console.log('📡 Fetching movies from feed_movies...');
-      const feedResponse = await feedHelpers.getMovies({ limit: 20, page: 1 });
-      console.log(`📦 Received ${feedResponse.items.length} movies from feed`);
+      // Fetch from TMDB via Edge Function (movies or TV based on mediaType)
+      console.log(`📡 Fetching ${mediaType}s from feed_movies...`);
+      const feedResponse = await feedHelpers.getFeed({ type: mediaType, limit: 20, page: 1 });
+      console.log(`📦 Received ${feedResponse.items.length} ${mediaType}s from feed`);
 
-      // Transform FeedMovie to MockTitle format
-      const fetchedTitles: MockTitle[] = feedResponse.items.map(movie => ({
-        id: movie.tmdb_id,
-        title: movie.title,
-        original_title: movie.title,
-        overview: movie.overview,
-        poster_path: movie.poster_path,
-        backdrop_path: null, // TMDB feed doesn't include backdrop_path
-        release_date: movie.release_date || undefined,
-        first_air_date: undefined,
-        vote_average: movie.vote_average || 0,
-        vote_count: movie.vote_count || 0,
-        popularity: movie.popularity || 0,
-        type: 'movie' as const,
-        genre_ids: [], // Genre IDs not included in feed response
+      // Transform to MockTitle format
+      const fetchedTitles: MockTitle[] = feedResponse.items.map((item) => ({
+        id: item.tmdb_id,
+        title: item.title,
+        original_title: item.title,
+        overview: item.overview,
+        poster_path: item.poster_path,
+        backdrop_path: null,
+        release_date: item.release_date || undefined,
+        first_air_date: item.first_air_date || undefined,
+        vote_average: item.vote_average || 0,
+        vote_count: item.vote_count || 0,
+        popularity: item.popularity || 0,
+        type: mediaType,
+        genre_ids: item.genre_ids ?? [],
       }));
 
       // Feed function already filters out swiped movies, but we'll keep the check for safety
@@ -257,26 +262,26 @@ export default function SwipeScreen() {
 
     try {
       const nextPage = currentPage + 1;
-      const feedResponse = await feedHelpers.getMovies({ limit: 20, page: nextPage });
+      const feedResponse = await feedHelpers.getFeed({ type: mediaType, limit: 20, page: nextPage });
 
       if (feedResponse.items.length === 0) {
         return;
       }
 
-      const newTitles: MockTitle[] = feedResponse.items.map(movie => ({
-        id: movie.tmdb_id,
-        title: movie.title,
-        original_title: movie.title,
-        overview: movie.overview,
-        poster_path: movie.poster_path,
+      const newTitles: MockTitle[] = feedResponse.items.map((item) => ({
+        id: item.tmdb_id,
+        title: item.title,
+        original_title: item.title,
+        overview: item.overview,
+        poster_path: item.poster_path,
         backdrop_path: null,
-        release_date: movie.release_date || undefined,
-        first_air_date: undefined,
-        vote_average: movie.vote_average || 0,
-        vote_count: movie.vote_count || 0,
-        popularity: movie.popularity || 0,
-        type: 'movie' as const,
-        genre_ids: [],
+        release_date: item.release_date || undefined,
+        first_air_date: item.first_air_date || undefined,
+        vote_average: item.vote_average || 0,
+        vote_count: item.vote_count || 0,
+        popularity: item.popularity || 0,
+        type: mediaType,
+        genre_ids: item.genre_ids ?? [],
       }));
 
       const existingIds = new Set(titles.map(t => `${t.type}-${t.id}`));
@@ -314,7 +319,8 @@ export default function SwipeScreen() {
   if (loading) {
     return (
       <ThemedView style={styles.container}>
-        <ThemedText>Loading titles...</ThemedText>
+        <MediaTypeToggle value={mediaType} onChange={setMediaType} />
+        <ThemedText>Loading {mediaType === 'tv' ? 'shows' : 'movies'}...</ThemedText>
       </ThemedView>
     );
   }
@@ -322,8 +328,9 @@ export default function SwipeScreen() {
   if (titles.length === 0 || currentIndex >= titles.length) {
     return (
       <ThemedView style={styles.container}>
+        <MediaTypeToggle value={mediaType} onChange={setMediaType} />
         <ThemedText type="title" style={styles.emptyTitle}>
-          No More Titles
+          No More {mediaType === 'tv' ? 'Shows' : 'Movies'}
         </ThemedText>
         <ThemedText style={styles.emptyText}>
           Check back later for more recommendations!
@@ -345,14 +352,43 @@ export default function SwipeScreen() {
         title={title}
         onSwipeLeft={handleSwipeLeft}
         onSwipeRight={handleSwipeRight}
+        onDoubleTap={() => {
+          setSelectedTitle(titles[currentIndex]);
+          setDetailVisible(true);
+        }}
         index={index}
         total={Math.min(3, titles.length - currentIndex)}
       />
     ));
 
+  const detailItem = selectedTitle
+    ? {
+        tmdb_id: selectedTitle.id,
+        type: selectedTitle.type,
+        title: selectedTitle.title,
+        original_title: selectedTitle.original_title ?? null,
+        overview: selectedTitle.overview ?? null,
+        poster_path: selectedTitle.poster_path ?? null,
+        backdrop_path: selectedTitle.backdrop_path ?? null,
+        vote_average: selectedTitle.vote_average ?? null,
+        release_date: selectedTitle.release_date ?? null,
+        first_air_date: selectedTitle.first_air_date ?? null,
+      }
+    : null;
+
   return (
     <ThemedView style={styles.container}>
+      <MediaTypeToggle value={mediaType} onChange={setMediaType} />
       <View style={styles.cardStack}>{visibleCards}</View>
+
+      <MovieDetailModal
+        visible={detailVisible}
+        onClose={() => {
+          setDetailVisible(false);
+          setSelectedTitle(null);
+        }}
+        item={detailItem}
+      />
 
       <View style={styles.actionButtons} collapsable={false}>
         <TouchableOpacity style={[styles.actionButton, styles.passButton]} onPress={handleSwipeLeft}>
@@ -372,12 +408,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: 20,
+    paddingBottom: 1,
   },
   cardStack: {
     flex: 1,
     width: '100%',
     justifyContent: 'center',
     alignItems: 'center',
+    marginTop: 8,
+    marginBottom: 4,
   },
   emptyTitle: {
     marginBottom: 16,
@@ -413,13 +452,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     direction: 'ltr',
     justifyContent: 'center',
-    gap: 40,
-    paddingVertical: 20,
+    gap: 32,
+    paddingVertical: 14,
+    paddingBottom: 10,
   },
   actionButton: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
+    width: 100,
+    height: 40,
+    borderRadius: 22,
     justifyContent: 'center',
     alignItems: 'center',
     shadowColor: '#000',

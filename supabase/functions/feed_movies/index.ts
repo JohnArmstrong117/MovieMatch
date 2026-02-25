@@ -1,5 +1,5 @@
 // Edge Function: feed_movies
-// Fetches personalized movie feed from TMDB based on user preferences
+// Fetches personalized movie or TV feed from TMDB based on user preferences
 // Requires: TMDB_API_KEY secret and user authentication
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
@@ -7,6 +7,8 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 const TMDB_API_KEY = Deno.env.get('TMDB_API_KEY');
+
+type FeedType = 'movie' | 'tv';
 
 interface TMDBMovie {
   id: number;
@@ -21,22 +23,37 @@ interface TMDBMovie {
   genre_ids: number[];
 }
 
+interface TMDBTvShow {
+  id: number;
+  name: string;
+  overview: string;
+  poster_path: string | null;
+  backdrop_path: string | null;
+  first_air_date: string;
+  popularity: number;
+  vote_average: number;
+  vote_count: number;
+  genre_ids: number[];
+}
+
 interface TMDBDiscoverResponse {
-  results: TMDBMovie[];
+  results: (TMDBMovie | TMDBTvShow)[];
   page: number;
   total_pages: number;
   total_results: number;
 }
 
-interface MovieCard {
+interface FeedItem {
   tmdb_id: number;
   title: string;
   poster_path: string | null;
   overview: string;
   release_date: string | null;
+  first_air_date: string | null;
   popularity: number | null;
   vote_average: number | null;
   vote_count: number | null;
+  genre_ids: number[];
   provider_summary?: {
     hasFlatrate: boolean;
     hasRent: boolean;
@@ -58,6 +75,10 @@ serve(async (req) => {
   console.log('📥 Received request to feed_movies');
   console.log('   Method:', req.method);
   console.log('   Has auth header:', !!req.headers.get('authorization'));
+
+  const body = await req.json().catch(() => ({}));
+  const feedType: FeedType = body.type === 'tv' ? 'tv' : 'movie';
+  console.log('   Feed type:', feedType);
 
   try {
     // Get authenticated user from JWT
@@ -103,8 +124,7 @@ serve(async (req) => {
       );
     }
 
-    // Parse request body for pagination options
-    const body = await req.json().catch(() => ({}));
+    // Pagination options (type already parsed above)
     const limit = Math.min(body.limit || 20, 40); // Max 40
     const page = Math.min(body.page || 1, 500); // Max page 500
     const includeRentBuy = body.includeRentBuy !== false; // Default true
@@ -154,18 +174,19 @@ serve(async (req) => {
     console.log(`   Provider IDs: ${providerIds.join(', ')}`);
     console.log(`   Genre IDs: ${genreIds.join(', ')}`);
 
-    // Get user's swiped movie IDs to exclude
-    const { data: swipedMovies } = await supabase
+    // Get user's swiped IDs for this type to exclude
+    const { data: swipedRows } = await supabase
       .from('swipes')
       .select('tmdb_id')
       .eq('user_id', user.id)
-      .eq('type', 'movie');
+      .eq('type', feedType);
 
-    const swipedIds = new Set(swipedMovies?.map(s => s.tmdb_id) || []);
+    const swipedIds = new Set(swipedRows?.map(s => s.tmdb_id) || []);
 
     // TMDB's with_genres uses AND logic (all genres must match)
     // To get OR logic (any genre), we make separate requests per genre and combine
-    console.log('📡 Making TMDB requests for OR genre logic (one request per genre)...');
+    const discoverPath = feedType === 'tv' ? 'discover/tv' : 'discover/movie';
+    console.log(`📡 Making TMDB requests for OR genre logic (${discoverPath})...`);
     
     const genreRequests = genreIds.map(async (genreId) => {
       const params = new URLSearchParams({
@@ -179,7 +200,7 @@ serve(async (req) => {
         page: page.toString(),
       });
 
-      const discoverUrl = `${TMDB_BASE_URL}/discover/movie?${params.toString()}`;
+      const discoverUrl = `${TMDB_BASE_URL}/${discoverPath}?${params.toString()}`;
       
       const response = await fetch(discoverUrl, {
         headers: {
@@ -191,55 +212,57 @@ serve(async (req) => {
       if (!response.ok) {
         const errorText = await response.text();
         console.error(`❌ TMDB API error for genre ${genreId}:`, response.status, errorText);
-        return { genreId, movies: [] };
+        return { genreId, results: [] };
       }
 
       const data: TMDBDiscoverResponse = await response.json();
-      console.log(`   Genre ${genreId}: ${data.results.length} movies found`);
-      return { genreId, movies: data.results };
+      console.log(`   Genre ${genreId}: ${data.results.length} ${feedType}s found`);
+      return { genreId, results: data.results };
     });
 
-    // Wait for all genre requests to complete
     const genreResults = await Promise.all(genreRequests);
     
-    // Combine all movies from all genres and deduplicate by movie ID
-    const movieMap = new Map<number, TMDBMovie>();
+    // Combine and deduplicate by id
+    const itemMap = new Map<number, TMDBMovie | TMDBTvShow>();
     
     for (const result of genreResults) {
-      for (const movie of result.movies) {
-        // Keep the movie with highest popularity if duplicate
-        const existing = movieMap.get(movie.id);
-        const moviePop = movie.popularity || 0;
+      for (const item of result.results) {
+        const existing = itemMap.get(item.id);
+        const itemPop = item.popularity || 0;
         const existingPop = existing?.popularity || 0;
-        if (!existing || moviePop > existingPop) {
-          movieMap.set(movie.id, movie);
+        if (!existing || itemPop > existingPop) {
+          itemMap.set(item.id, item);
         }
       }
     }
     
-    // Convert map back to array and sort by popularity
-    const combinedMovies = Array.from(movieMap.values())
+    const combined = Array.from(itemMap.values())
       .sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
     
-    console.log(`📦 Combined ${combinedMovies.length} unique movies from ${genreIds.length} genres`);
+    console.log(`📦 Combined ${combined.length} unique ${feedType}s from ${genreIds.length} genres`);
 
-    // Filter out already swiped movies
-    const unswipedMovies = combinedMovies.filter(movie => !swipedIds.has(movie.id));
-    console.log(`🎬 After filtering swiped movies: ${unswipedMovies.length} movies remaining (${swipedIds.size} already swiped)`);
+    const unswiped = combined.filter(item => !swipedIds.has(item.id));
+    console.log(`🎬 After filtering swiped: ${unswiped.length} remaining (${swipedIds.size} already swiped)`);
 
-    // Transform to MovieCard format
-    const items: MovieCard[] = unswipedMovies.slice(0, limit).map(movie => ({
-      tmdb_id: movie.id,
-      title: movie.title,
-      poster_path: movie.poster_path,
-      overview: movie.overview,
-      release_date: movie.release_date || null,
-      popularity: movie.popularity || null,
-      vote_average: movie.vote_average || null,
-      vote_count: movie.vote_count || null,
-    }));
+    // Transform to FeedItem (unified shape for movie and tv)
+    const items: FeedItem[] = unswiped.slice(0, limit).map((item) => {
+      const isTv = feedType === 'tv';
+      const tv = item as TMDBTvShow;
+      const movie = item as TMDBMovie;
+      return {
+        tmdb_id: item.id,
+        title: isTv ? tv.name : movie.title,
+        poster_path: item.poster_path,
+        overview: item.overview,
+        release_date: isTv ? null : (movie.release_date || null),
+        first_air_date: isTv ? (tv.first_air_date || null) : null,
+        popularity: item.popularity ?? null,
+        vote_average: item.vote_average ?? null,
+        vote_count: item.vote_count ?? null,
+        genre_ids: item.genre_ids || [],
+      };
+    });
 
-    // Upsert movies into titles cache
     const supabaseAdmin = createClient(
       supabaseUrl,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
@@ -252,24 +275,25 @@ serve(async (req) => {
     );
 
     if (items.length > 0) {
-      const titleInserts = items.map(movie => ({
-        tmdb_id: movie.tmdb_id,
-        type: 'movie' as const,
-        title: movie.title,
-        poster_path: movie.poster_path,
-        overview: movie.overview,
-        release_date: movie.release_date,
-        popularity: movie.popularity,
-        vote_average: movie.vote_average,
-        vote_count: movie.vote_count,
+      const titleInserts = items.map((item) => ({
+        tmdb_id: item.tmdb_id,
+        type: feedType,
+        title: item.title,
+        poster_path: item.poster_path,
+        overview: item.overview,
+        release_date: item.release_date,
+        first_air_date: item.first_air_date,
+        popularity: item.popularity,
+        vote_average: item.vote_average,
+        vote_count: item.vote_count,
         updated_at: new Date().toISOString(),
+        metadata: { genre_ids: item.genre_ids || [] },
       }));
 
-      // Use upsert to avoid duplicates
       try {
         const { error: upsertError } = await supabaseAdmin
           .from('titles')
-          .upsert(titleInserts, { onConflict: 'tmdb_id' });
+          .upsert(titleInserts, { onConflict: 'tmdb_id,type' });
         
         if (upsertError) {
           console.error('Error upserting titles:', upsertError);
@@ -279,13 +303,10 @@ serve(async (req) => {
       }
     }
 
-    // Determine if there's a next page
-    // Since we're combining results from multiple genre requests, enable pagination
-    // if we got the full limit of results (suggesting there might be more)
     const hasNextPage = items.length === limit;
     const nextPage = hasNextPage ? page + 1 : null;
 
-    console.log(`✅ Returning ${items.length} movies to client (nextPage: ${nextPage})`);
+    console.log(`✅ Returning ${items.length} ${feedType}s to client (nextPage: ${nextPage})`);
 
     return new Response(
       JSON.stringify({

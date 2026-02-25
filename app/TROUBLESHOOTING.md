@@ -64,6 +64,23 @@ Check the terminal for error messages. Common issues:
 - **Import errors**: Make sure all files are saved correctly
 - **Type errors**: Check TypeScript compilation
 
+### 8. No Edge Function logs in the Supabase Dashboard
+**Dashboard logs only appear when the app calls your hosted Supabase project.** The app defaults to **local** Supabase (`http://127.0.0.1:54321` or your machine’s IP on port 54321) unless you set the hosted URL.
+
+- **If you want logs in the Supabase Dashboard (hosted):**  
+  Point the app at your hosted project:
+  1. In the app folder, create or edit `.env.local` (or set `extra` in `app.config.js`):
+     - `EXPO_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co`
+     - `EXPO_PUBLIC_SUPABASE_ANON_KEY=your_hosted_anon_key`
+  2. Restart the app (e.g. `npx expo start --clear`). Then open a movie detail so `get_watch_providers` runs.
+  3. In the Dashboard: **Project → Edge Functions → get_watch_providers → Logs**. You should see entries like `[get_watch_providers] request POST /functions/v1/get_watch_providers`.
+
+- **If you’re using local Supabase:**  
+  Function logs appear in the **terminal** where you run `supabase functions serve` (or `supabase start` with functions), not in the Dashboard. Check that terminal when you open a movie detail.
+
+- **See which URL the app is using:**  
+  In the app, check the dev console when it loads; it logs `🔗 Supabase URL: ...`. If that’s `http://...:54321`, you’re on local; if it’s `https://....supabase.co`, you’re on hosted.
+
 ## Testing Checklist
 
 - [ ] Can you see 4 tabs: Home, Swipe, Matches, Preferences?

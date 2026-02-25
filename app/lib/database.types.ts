@@ -20,6 +20,7 @@ export interface Database {
           id: string
           display_name: string | null
           country_code: string | null
+          avatar_url: string | null
           created_at: string
           updated_at: string
         }
@@ -27,6 +28,7 @@ export interface Database {
           id: string
           display_name?: string | null
           country_code?: string | null
+          avatar_url?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -34,6 +36,7 @@ export interface Database {
           id?: string
           display_name?: string | null
           country_code?: string | null
+          avatar_url?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -233,6 +236,61 @@ export interface Database {
           rating?: number | null
           created_at?: string
           updated_at?: string
+        }
+      }
+      friend_requests: {
+        Row: {
+          id: string
+          from_user_id: string
+          to_user_id: string
+          status: 'pending' | 'accepted' | 'rejected'
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          from_user_id: string
+          to_user_id: string
+          status?: 'pending' | 'accepted' | 'rejected'
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          from_user_id?: string
+          to_user_id?: string
+          status?: 'pending' | 'accepted' | 'rejected'
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      recommendations: {
+        Row: {
+          id: string
+          from_user_id: string
+          to_user_id: string
+          tmdb_id: number
+          type: 'movie' | 'tv'
+          created_at: string
+          message: string | null
+        }
+        Insert: {
+          id?: string
+          from_user_id: string
+          to_user_id: string
+          tmdb_id: number
+          type: 'movie' | 'tv'
+          created_at?: string
+          message?: string | null
+        }
+        Update: {
+          id?: string
+          from_user_id?: string
+          to_user_id?: string
+          tmdb_id?: number
+          type?: 'movie' | 'tv'
+          created_at?: string
+          message?: string | null
         }
       }
     }
