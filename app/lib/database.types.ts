@@ -21,6 +21,9 @@ export interface Database {
           display_name: string | null
           country_code: string | null
           avatar_url: string | null
+          avatar_color: string | null
+          email: string | null
+          phone: string | null
           created_at: string
           updated_at: string
         }
@@ -29,6 +32,9 @@ export interface Database {
           display_name?: string | null
           country_code?: string | null
           avatar_url?: string | null
+          avatar_color?: string | null
+          email?: string | null
+          phone?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -37,6 +43,9 @@ export interface Database {
           display_name?: string | null
           country_code?: string | null
           avatar_url?: string | null
+          avatar_color?: string | null
+          email?: string | null
+          phone?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -384,6 +393,28 @@ export interface Database {
           p_metadata?: Json | null
         }
         Returns: string
+      }
+      lookup_users_by_emails: {
+        Args: {
+          p_caller_id: string
+          p_emails: string[]
+        }
+        Returns: {
+          email: string
+          user_id: string
+          display_name: string | null
+        }[]
+      }
+      lookup_users_by_phones: {
+        Args: {
+          p_caller_id: string
+          p_phones: string[]
+        }
+        Returns: {
+          phone: string
+          user_id: string
+          display_name: string | null
+        }[]
       }
     }
   }

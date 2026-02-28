@@ -9,6 +9,7 @@ import { useAuth } from '@/contexts/auth-context';
 export default function SignUpScreen() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -16,8 +17,12 @@ export default function SignUpScreen() {
   const router = useRouter();
 
   const handleSignUp = async () => {
-    if (!name || !email || !password || !confirmPassword) {
+    if (!name || !email || !phone || !password || !confirmPassword) {
       Alert.alert('Error', 'Please fill in all fields');
+      return;
+    }
+    if (phone.replace(/\D/g, '').length < 10) {
+      Alert.alert('Error', 'Please enter a valid phone number');
       return;
     }
 
@@ -33,7 +38,7 @@ export default function SignUpScreen() {
 
     setLoading(true);
     try {
-      await signUp(email, password, name);
+      await signUp(email, password, name, phone);
       Alert.alert('Success', 'Account created! Please check your email to verify your account.');
       router.replace('/(auth)/login');
     } catch (error: any) {
@@ -73,6 +78,16 @@ export default function SignUpScreen() {
             autoComplete="email"
             value={email}
             onChangeText={setEmail}
+            editable={!loading}
+          />
+          <TextInput
+            style={styles.input}
+            placeholder="Phone number"
+            placeholderTextColor="#999"
+            keyboardType="phone-pad"
+            autoComplete="tel"
+            value={phone}
+            onChangeText={setPhone}
             editable={!loading}
           />
           <TextInput
@@ -160,7 +175,7 @@ const styles = StyleSheet.create({
   button: {
     width: '100%',
     height: 50,
-    backgroundColor: '#0a7ea4',
+    backgroundColor: '#e01245',
     borderRadius: 8,
     justifyContent: 'center',
     alignItems: 'center',

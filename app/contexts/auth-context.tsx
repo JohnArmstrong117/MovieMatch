@@ -9,7 +9,7 @@ type AuthContextType = {
   session: Session | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string, name?: string) => Promise<void>;
+  signUp: (email: string, password: string, name?: string, phone?: string) => Promise<void>;
   signOut: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
 };
@@ -78,7 +78,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(data.user);
   };
 
-  const signUp = async (email: string, password: string, name?: string) => {
+  const signUp = async (email: string, password: string, name?: string, phone?: string) => {
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
@@ -88,11 +88,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         },
       },
     });
-    
+
     if (error) throw error;
-    
+
     setSession(data.session);
     setUser(data.user);
+
+    if (data.user && phone && phone.replace(/\D/g, '').length > 0) {
+      const normalizedPhone = phone.replace(/\D/g, '');
+      await supabase
+        .from('profiles')
+        .update({ phone: normalizedPhone })
+        .eq('id', data.user.id);
+    }
   };
 
   const signOut = async () => {

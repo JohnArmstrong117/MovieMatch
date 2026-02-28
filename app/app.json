@@ -38,7 +38,14 @@
             "backgroundColor": "#000000"
           }
         }
-      ]
+      ],
+      [
+        "expo-contacts",
+        {
+          "contactsPermission": "Allow FlickSwipe to access your contacts to find friends and invite them to the app."
+        }
+      ],
+      "expo-font"
     ],
     "experiments": {
       "typedRoutes": true,

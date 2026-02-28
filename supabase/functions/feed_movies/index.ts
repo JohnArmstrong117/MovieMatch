@@ -184,65 +184,69 @@ serve(async (req) => {
     const swipedIds = new Set(swipedRows?.map(s => s.tmdb_id) || []);
 
     // TMDB's with_genres uses AND logic (all genres must match)
-    // To get OR logic (any genre), we make separate requests per genre and combine
+    // To get OR logic (any genre), we make separate requests per genre and combine.
+    // If the first page yields too few unswiped items (user has already swiped them),
+    // try next pages until we have enough or we've tried maxPages.
     const discoverPath = feedType === 'tv' ? 'discover/tv' : 'discover/movie';
-    console.log(`📡 Making TMDB requests for OR genre logic (${discoverPath})...`);
-    
-    const genreRequests = genreIds.map(async (genreId) => {
-      const params = new URLSearchParams({
-        api_key: TMDB_API_KEY,
-        watch_region: 'US',
-        with_genres: genreId.toString(),
-        with_watch_providers: providerIds.join('|'),
-        sort_by: 'popularity.desc',
-        include_adult: 'false',
-        'vote_count.gte': '50',
-        page: page.toString(),
-      });
-
-      const discoverUrl = `${TMDB_BASE_URL}/${discoverPath}?${params.toString()}`;
-      
-      const response = await fetch(discoverUrl, {
-        headers: {
-          'Authorization': `Bearer ${TMDB_API_KEY}`,
-          'Accept': 'application/json',
-        },
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error(`❌ TMDB API error for genre ${genreId}:`, response.status, errorText);
-        return { genreId, results: [] };
-      }
-
-      const data: TMDBDiscoverResponse = await response.json();
-      console.log(`   Genre ${genreId}: ${data.results.length} ${feedType}s found`);
-      return { genreId, results: data.results };
-    });
-
-    const genreResults = await Promise.all(genreRequests);
-    
-    // Combine and deduplicate by id
+    const maxPages = 5;
     const itemMap = new Map<number, TMDBMovie | TMDBTvShow>();
-    
-    for (const result of genreResults) {
-      for (const item of result.results) {
-        const existing = itemMap.get(item.id);
-        const itemPop = item.popularity || 0;
-        const existingPop = existing?.popularity || 0;
-        if (!existing || itemPop > existingPop) {
-          itemMap.set(item.id, item);
+    let currentPage = page;
+    let unswiped: (TMDBMovie | TMDBTvShow)[] = [];
+
+    while (currentPage <= Math.min(page + maxPages - 1, 500)) {
+      console.log(`📡 Making TMDB requests for ${discoverPath} page ${currentPage}...`);
+      const genreRequests = genreIds.map(async (genreId) => {
+        const params = new URLSearchParams({
+          api_key: TMDB_API_KEY,
+          watch_region: 'US',
+          with_genres: genreId.toString(),
+          with_watch_providers: providerIds.join('|'),
+          sort_by: 'popularity.desc',
+          include_adult: 'false',
+          'vote_count.gte': '50',
+          page: currentPage.toString(),
+        });
+
+        const discoverUrl = `${TMDB_BASE_URL}/${discoverPath}?${params.toString()}`;
+        const response = await fetch(discoverUrl, {
+          headers: {
+            'Authorization': `Bearer ${TMDB_API_KEY}`,
+            'Accept': 'application/json',
+          },
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error(`❌ TMDB API error for genre ${genreId} page ${currentPage}:`, response.status, errorText);
+          return { genreId, results: [] };
+        }
+
+        const data: TMDBDiscoverResponse = await response.json();
+        return { genreId, results: data.results };
+      });
+
+      const genreResults = await Promise.all(genreRequests);
+      for (const result of genreResults) {
+        for (const item of result.results) {
+          const existing = itemMap.get(item.id);
+          const itemPop = item.popularity || 0;
+          const existingPop = existing?.popularity || 0;
+          if (!existing || itemPop > existingPop) {
+            itemMap.set(item.id, item);
+          }
         }
       }
-    }
-    
-    const combined = Array.from(itemMap.values())
-      .sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
-    
-    console.log(`📦 Combined ${combined.length} unique ${feedType}s from ${genreIds.length} genres`);
 
-    const unswiped = combined.filter(item => !swipedIds.has(item.id));
-    console.log(`🎬 After filtering swiped: ${unswiped.length} remaining (${swipedIds.size} already swiped)`);
+      const combined = Array.from(itemMap.values())
+        .sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
+      unswiped = combined.filter((item) => !swipedIds.has(item.id));
+      console.log(`   Page ${currentPage}: ${combined.length} total, ${unswiped.length} unswiped (${swipedIds.size} already swiped)`);
+
+      if (unswiped.length >= limit) break;
+      currentPage += 1;
+    }
+
+    console.log(`📦 Using ${unswiped.length} unswiped ${feedType}s from pages ${page}-${currentPage}`);
 
     // Transform to FeedItem (unified shape for movie and tv)
     const items: FeedItem[] = unswiped.slice(0, limit).map((item) => {

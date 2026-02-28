@@ -1,26 +1,20 @@
 import { Tabs, useFocusEffect } from 'expo-router';
-import React, { useState, useCallback } from 'react';
+import React, { useCallback } from 'react';
 
 import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { useAuth } from '@/contexts/auth-context';
-import { friendHelpers } from '@/lib/db-helpers';
+import { useNotificationCounts } from '@/contexts/notification-counts-context';
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
-  const { user } = useAuth();
-  const [pendingRequestsCount, setPendingRequestsCount] = useState(0);
+  const { pendingRequestsCount, refetch } = useNotificationCounts();
 
   useFocusEffect(
     useCallback(() => {
-      if (!user) {
-        setPendingRequestsCount(0);
-        return;
-      }
-      friendHelpers.getPendingReceivedCount(user.id).then(setPendingRequestsCount).catch(() => setPendingRequestsCount(0));
-    }, [user?.id])
+      refetch();
+    }, [refetch])
   );
 
   return (

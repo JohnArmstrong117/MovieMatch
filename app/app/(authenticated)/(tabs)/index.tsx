@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { StyleSheet, View, TouchableOpacity, Alert } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useAuth } from '@/contexts/auth-context';
@@ -15,6 +15,8 @@ export default function SwipeScreen() {
   const { user } = useAuth();
   const router = useRouter();
   const [mediaType, setMediaType] = useState<'movie' | 'tv'>('movie');
+  const mediaTypeRef = useRef(mediaType);
+  mediaTypeRef.current = mediaType;
   const [titles, setTitles] = useState<MockTitle[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -33,17 +35,19 @@ export default function SwipeScreen() {
     }
   }, [hasPreferences, user, mediaType]);
 
-  // Refresh titles when screen comes into focus (e.g., after preferences update)
+  // When screen gains focus: only reload if we have no titles (e.g. first load or after preferences change).
+  // If we already have a stack (e.g. came back from Matches), keep it so we don't replace it with page 1
+  // (which would all be already-swiped and show "No more titles").
   useFocusEffect(
     useCallback(() => {
       if (hasPreferences && user) {
-        // Reset and reload titles for current media type (movies or TV)
-        loadTitles();
+        if (titles.length === 0) {
+          loadTitles();
+        }
       } else if (user) {
-        // Re-check preferences in case they were set
         checkPreferences();
       }
-    }, [hasPreferences, user, mediaType])
+    }, [hasPreferences, user, mediaType, titles.length])
   );
 
   const checkPreferences = async () => {
@@ -83,6 +87,7 @@ export default function SwipeScreen() {
   const loadTitles = async () => {
     if (!user) return;
 
+    const type = mediaTypeRef.current;
     setLoading(true);
     try {
       const [services, genres] = await Promise.all([
@@ -90,10 +95,10 @@ export default function SwipeScreen() {
         genreHelpers.getUserGenres(user.id),
       ]);
 
-      // Fetch from TMDB via Edge Function (movies or TV based on mediaType)
-      console.log(`📡 Fetching ${mediaType}s from feed_movies...`);
-      const feedResponse = await feedHelpers.getFeed({ type: mediaType, limit: 20, page: 1 });
-      console.log(`📦 Received ${feedResponse.items.length} ${mediaType}s from feed`);
+      // Fetch from TMDB via Edge Function (movies or TV) – use ref so Refresh/focus always use current toggle
+      console.log(`📡 Fetching ${type}s from feed_movies...`);
+      const feedResponse = await feedHelpers.getFeed({ type, limit: 20, page: 1 });
+      console.log(`📦 Received ${feedResponse.items.length} ${type}s from feed`);
 
       // Transform to MockTitle format
       const fetchedTitles: MockTitle[] = feedResponse.items.map((item) => ({
@@ -108,7 +113,7 @@ export default function SwipeScreen() {
         vote_average: item.vote_average || 0,
         vote_count: item.vote_count || 0,
         popularity: item.popularity || 0,
-        type: mediaType,
+        type,
         genre_ids: item.genre_ids ?? [],
       }));
 
@@ -260,9 +265,10 @@ export default function SwipeScreen() {
   const loadMoreTitles = async () => {
     if (!user || loading) return;
 
+    const type = mediaTypeRef.current;
     try {
       const nextPage = currentPage + 1;
-      const feedResponse = await feedHelpers.getFeed({ type: mediaType, limit: 20, page: nextPage });
+      const feedResponse = await feedHelpers.getFeed({ type, limit: 20, page: nextPage });
 
       if (feedResponse.items.length === 0) {
         return;
@@ -280,7 +286,7 @@ export default function SwipeScreen() {
         vote_average: item.vote_average || 0,
         vote_count: item.vote_count || 0,
         popularity: item.popularity || 0,
-        type: mediaType,
+        type,
         genre_ids: item.genre_ids ?? [],
       }));
 
@@ -430,7 +436,7 @@ const styles = StyleSheet.create({
   refreshButton: {
     paddingHorizontal: 24,
     paddingVertical: 12,
-    backgroundColor: '#0a7ea4',
+    backgroundColor: '#e01245',
     borderRadius: 8,
   },
   refreshButtonText: {
@@ -441,7 +447,7 @@ const styles = StyleSheet.create({
     marginTop: 24,
     paddingHorizontal: 24,
     paddingVertical: 12,
-    backgroundColor: '#0a7ea4',
+    backgroundColor: '#e01245',
     borderRadius: 8,
   },
   setupButtonText: {

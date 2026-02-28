@@ -10,8 +10,7 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useAuth } from '@/contexts/auth-context';
-
-const INBOX_LAST_OPENED_KEY = 'inbox_last_opened_at';
+import { useNotificationCounts } from '@/contexts/notification-counts-context';
 import { friendHelpers, matchHelpers } from '@/lib/db-helpers';
 import type { RecommendationReceived } from '@/lib/db-helpers';
 import { ThemedView } from '@/components/themed-view';
@@ -64,13 +63,15 @@ export default function InboxScreen() {
     }
   }, [user]);
 
+  const { markInboxOpened } = useNotificationCounts();
+
   useFocusEffect(
     useCallback(() => {
       if (user) {
         load();
-        AsyncStorage.setItem(INBOX_LAST_OPENED_KEY, new Date().toISOString());
+        markInboxOpened();
       }
-    }, [user, load])
+    }, [user, load, markInboxOpened])
   );
 
   const onRefresh = () => {
@@ -197,7 +198,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   backButton: { paddingVertical: 8, paddingRight: 8 },
-  backButtonText: { fontSize: 16, fontWeight: '600', color: '#0a7ea4' },
+  backButtonText: { fontSize: 16, fontWeight: '600', color: '#e01245' },
   headerTitle: { flex: 1, fontSize: 18, fontWeight: '600' },
   centered: { flex: 1, textAlign: 'center', marginTop: 24 },
   empty: {

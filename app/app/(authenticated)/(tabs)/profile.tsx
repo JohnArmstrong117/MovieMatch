@@ -6,12 +6,10 @@ import {
   View,
   Alert,
   ActivityIndicator,
-  Image,
   TextInput,
-  Platform,
+  Text,
 } from 'react-native';
 import { Link, useRouter } from 'expo-router';
-import * as ImagePicker from 'expo-image-picker';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -19,17 +17,35 @@ import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useAuth } from '@/contexts/auth-context';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useThemeColor } from '@/hooks/use-theme-color';
 import { profileHelpers } from '@/lib/db-helpers';
+
+const AVATAR_COLOR_PRESETS = [
+  '#e01245',
+  '#6B2D3C',
+  '#0a7ea4',
+  '#1a5f7a',
+  '#2d6a4f',
+  '#5c4d7d',
+  '#b5651d',
+  '#9d4edd',
+  '#2ec4b6',
+];
 
 export default function ProfileScreen() {
   const { user, signOut } = useAuth();
   const router = useRouter();
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
+  const inputTextColor = useThemeColor({}, 'text');
+  const inputPlaceholderColor = useThemeColor({}, 'icon');
+  const inputBorderColor = useThemeColor(
+    { light: 'rgba(0,0,0,0.15)', dark: 'rgba(255,255,255,0.2)' },
+    'icon'
+  );
 
   const [displayName, setDisplayName] = useState('');
-  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
-  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [avatarColor, setAvatarColor] = useState(colors.tint);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -39,13 +55,14 @@ export default function ProfileScreen() {
     try {
       const profile = await profileHelpers.getProfile(user.id);
       setDisplayName(profile?.display_name || '');
-      setAvatarUrl(profile?.avatar_url || null);
+      const saved = profile?.avatar_color;
+      setAvatarColor(saved && /^#[0-9A-Fa-f]{6}$/.test(saved) ? saved : colors.tint);
     } catch {
       // ignore
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [user, colors.tint]);
 
   useEffect(() => {
     if (user) loadProfile();
@@ -56,34 +73,6 @@ export default function ProfileScreen() {
     (user?.user_metadata?.name as string)?.trim() ||
     user?.email?.split('@')[0] ||
     'User';
-
-  const pickAvatar = async () => {
-    if (!user) return;
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert('Permission needed', 'Allow access to your photos to set a profile picture.');
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.8,
-    });
-    if (result.canceled || !result.assets[0]) return;
-    setUploadingAvatar(true);
-    try {
-      const uri = result.assets[0].uri;
-      const mime = result.assets[0].mimeType || 'image/jpeg';
-      const url = await profileHelpers.uploadAvatar(user.id, uri, mime);
-      setAvatarUrl(url);
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : 'Failed to upload photo';
-      Alert.alert('Error', String(msg));
-    } finally {
-      setUploadingAvatar(false);
-    }
-  };
 
   const saveDisplayName = async () => {
     if (!user) return;
@@ -96,6 +85,19 @@ export default function ProfileScreen() {
       Alert.alert('Error', 'Failed to save display name');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const saveAvatarColor = async (hex: string) => {
+    if (!user) return;
+    setAvatarColor(hex);
+    try {
+      await profileHelpers.updateProfile(user.id, {
+        avatar_color: hex,
+      });
+    } catch (e) {
+      // Column may not exist until migration 20240113000000_profiles_avatar_color is applied
+      if (__DEV__) console.warn('Could not save icon color (migration applied?)', e);
     }
   };
 
@@ -140,29 +142,35 @@ export default function ProfileScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}>
         <View style={styles.profileSection}>
-          <TouchableOpacity
-            style={styles.avatarTouchable}
-            onPress={pickAvatar}
-            disabled={uploadingAvatar}>
-            {avatarUrl ? (
-              <Image source={{ uri: avatarUrl }} style={styles.avatar} />
-            ) : (
-              <View style={[styles.avatarCircle, { backgroundColor: colors.tint }]}>
-                <ThemedText style={styles.avatarText}>
-                  {displayNameFallback.charAt(0).toUpperCase()}
-                </ThemedText>
-              </View>
-            )}
-            {uploadingAvatar && (
-              <View style={styles.avatarOverlay}>
-                <ActivityIndicator size="small" color="#fff" />
-              </View>
-            )}
-          </TouchableOpacity>
+          <View style={[styles.avatarCircle, { backgroundColor: avatarColor }]}>
+            <Text style={styles.avatarText} numberOfLines={1}>
+              {displayNameFallback.charAt(0).toUpperCase()}
+            </Text>
+          </View>
+          <ThemedText style={styles.colorLabel}>Icon color</ThemedText>
+          <View style={styles.colorRow}>
+            {AVATAR_COLOR_PRESETS.map((hex) => (
+              <TouchableOpacity
+                key={hex}
+                style={[
+                  styles.colorSwatch,
+                  { backgroundColor: hex },
+                  avatarColor === hex && styles.colorSwatchSelected,
+                ]}
+                onPress={() => saveAvatarColor(hex)}
+              />
+            ))}
+          </View>
           <TextInput
-            style={styles.displayNameInput}
+            style={[
+              styles.displayNameInput,
+              {
+                color: inputTextColor,
+                borderColor: inputBorderColor,
+              },
+            ]}
             placeholder="Display name (shown to friends)"
-            placeholderTextColor="#999"
+            placeholderTextColor={inputPlaceholderColor}
             value={displayName}
             onChangeText={setDisplayName}
             onBlur={saveDisplayName}
@@ -224,48 +232,53 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 32,
   },
-  avatarTouchable: {
-    position: 'relative',
-    marginBottom: 12,
-  },
-  avatar: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-  },
   avatarCircle: {
     width: 80,
     height: 80,
     borderRadius: 40,
     alignItems: 'center',
     justifyContent: 'center',
+    marginBottom: 16,
   },
   avatarText: {
-    fontSize: 32,
-    fontWeight: '600',
+    fontSize: 36,
+    lineHeight: 44,
+    fontWeight: '700',
     color: '#fff',
   },
-  avatarOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    borderRadius: 40,
-    width: 80,
-    height: 80,
-    alignItems: 'center',
+  colorLabel: {
+    fontSize: 14,
+    marginBottom: 8,
+    opacity: 0.9,
+  },
+  colorRow: {
+    flexDirection: 'row',
+    flexWrap: 'nowrap',
     justifyContent: 'center',
+    gap: 6,
+    marginBottom: 20,
+  },
+  colorSwatch: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  colorSwatchSelected: {
+    borderColor: '#fff',
+    borderWidth: 2,
   },
   displayNameInput: {
     width: '100%',
     maxWidth: 280,
     borderWidth: 1,
-    borderColor: '#ddd',
     borderRadius: 8,
     paddingHorizontal: 14,
     paddingVertical: 10,
     fontSize: 18,
     textAlign: 'center',
     marginBottom: 4,
-    ...(Platform.OS === 'web' ? {} : { color: '#000' }),
   },
   savingIndicator: {
     marginVertical: 4,

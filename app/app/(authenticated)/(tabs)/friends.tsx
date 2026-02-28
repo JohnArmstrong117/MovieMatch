@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useAuth } from '@/contexts/auth-context';
+import { useNotificationCounts } from '@/contexts/notification-counts-context';
 import { friendHelpers } from '@/lib/db-helpers';
 import type { FriendWithProfile, PendingRequestWithProfile } from '@/lib/db-helpers';
 import { ThemedView } from '@/components/themed-view';
@@ -21,6 +22,7 @@ import { ThemedText } from '@/components/themed-text';
 export default function FriendsScreen() {
   const { user } = useAuth();
   const router = useRouter();
+  const { refetch: refetchNotificationCounts } = useNotificationCounts();
   const [loading, setLoading] = useState(true);
   const [friends, setFriends] = useState<FriendWithProfile[]>([]);
   const [pendingReceived, setPendingReceived] = useState<PendingRequestWithProfile[]>([]);
@@ -97,6 +99,7 @@ export default function FriendsScreen() {
     try {
       await friendHelpers.acceptRequest(requestId, user.id);
       await load();
+      refetchNotificationCounts();
     } catch {
       Alert.alert('Error', 'Failed to accept');
     } finally {
@@ -110,6 +113,7 @@ export default function FriendsScreen() {
     try {
       await friendHelpers.rejectRequest(requestId, user.id);
       await load();
+      refetchNotificationCounts();
     } catch {
       Alert.alert('Error', 'Failed to reject');
     } finally {
@@ -267,6 +271,22 @@ export default function FriendsScreen() {
           </ThemedView>
         )}
 
+        {/* From contacts */}
+        <ThemedView style={styles.section}>
+          <ThemedText type="subtitle" style={styles.sectionTitle}>
+            From contacts
+          </ThemedText>
+          <ThemedText style={styles.sectionDescription}>
+            Find friends on FlickSwipe or invite contacts to join
+          </ThemedText>
+          <TouchableOpacity
+            style={styles.contactsButton}
+            onPress={() => router.push('/contacts')}
+            activeOpacity={0.7}>
+            <ThemedText style={styles.contactsButtonText}>Open contacts</ThemedText>
+          </TouchableOpacity>
+        </ThemedView>
+
         {/* Add friend */}
         <ThemedView style={styles.section}>
           <ThemedText type="subtitle" style={styles.sectionTitle}>
@@ -412,6 +432,18 @@ const styles = StyleSheet.create({
     opacity: 0.7,
     fontSize: 14,
   },
+  contactsButton: {
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    backgroundColor: '#e01245',
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  contactsButtonText: {
+    color: '#fff',
+    fontWeight: '600',
+    fontSize: 16,
+  },
   muted: {
     opacity: 0.7,
     fontSize: 14,
@@ -481,13 +513,13 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   smallButton: {
-    backgroundColor: '#0a7ea4',
+    backgroundColor: '#e01245',
     paddingHorizontal: 14,
     paddingVertical: 6,
     borderRadius: 8,
   },
   smallButtonSuccess: {
-    backgroundColor: '#0a7ea4',
+    backgroundColor: '#e01245',
   },
   smallButtonText: {
     color: '#fff',
@@ -558,7 +590,7 @@ const styles = StyleSheet.create({
   actionModalButtonText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#0a7ea4',
+    color: '#e01245',
   },
   actionModalButtonDanger: {},
   actionModalButtonDangerText: {

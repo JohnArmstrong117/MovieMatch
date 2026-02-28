@@ -9,6 +9,7 @@ import {
   Image,
   TextInput,
 } from 'react-native';
+import { useRouter } from 'expo-router';
 import { useAuth } from '@/contexts/auth-context';
 import {
   streamingServiceHelpers,
@@ -22,6 +23,7 @@ import { ThemedText } from '@/components/themed-text';
 const TMDB_IMAGE_BASE_URL = 'https://image.tmdb.org/t/p/w92';
 
 export default function PreferencesScreen() {
+  const router = useRouter();
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -154,7 +156,7 @@ export default function PreferencesScreen() {
         country_code: countryCode || null,
       });
 
-      Alert.alert('Success', 'Preferences saved! Your movie feed will refresh when you return to the swipe screen.');
+      router.replace('/(tabs)');
     } catch (error) {
       console.error('Error saving preferences:', error);
       Alert.alert('Error', 'Failed to save preferences');
@@ -294,7 +296,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   saveButtonSmall: {
-    backgroundColor: '#0a7ea4',
+    backgroundColor: '#e01245',
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 8,
@@ -364,8 +366,8 @@ const styles = StyleSheet.create({
     paddingLeft: 8,
   },
   chipActive: {
-    backgroundColor: '#0a7ea4',
-    borderColor: '#0a7ea4',
+    backgroundColor: '#e01245',
+    borderColor: '#e01245',
   },
   providerLogo: {
     width: 24,

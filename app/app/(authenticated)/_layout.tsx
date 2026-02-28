@@ -3,6 +3,8 @@ import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Stack, useRouter, usePathname } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFonts } from '@expo-google-fonts/limelight/useFonts';
+import { Limelight_400Regular } from '@expo-google-fonts/limelight/400Regular';
 import { AuthGate } from '@/components/auth-gate';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useAuth } from '@/contexts/auth-context';
@@ -79,11 +81,13 @@ export default function AuthenticatedLayout() {
             <Stack.Screen name="shared-with" options={{ headerShown: false }} />
             <Stack.Screen name="recommend-to" options={{ headerShown: false }} />
             <Stack.Screen name="inbox" options={{ headerShown: false }} />
+            <Stack.Screen name="contacts" options={{ headerShown: false }} />
             <Stack.Screen name="(onboarding)" options={{ headerShown: false }} />
             <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
           </Stack>
         </View>
       </View>
+      </NotificationCountsProvider>
     </AuthGate>
   );
 }
@@ -96,7 +100,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#0a7ea4',
+    backgroundColor: '#e01245',
     paddingHorizontal: 12,
     minHeight: 36,
   },
@@ -114,11 +118,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingBottom: 14,
   },
+  bannerTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+  },
   bannerText: {
     fontSize: 20,
     fontWeight: '700',
     color: '#fff',
     letterSpacing: 0.5,
+  },
+  bannerTextFlick: {
+    fontFamily: 'Limelight_400Regular',
+    fontWeight: '400',
   },
   inboxButton: {
     width: 36,

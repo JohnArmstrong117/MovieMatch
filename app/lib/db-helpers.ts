@@ -331,6 +331,49 @@ export const friendHelpers = {
     if (error) throw error;
     return count ?? 0;
   },
+
+  /** Normalize phone to digits only (for storage and lookup). */
+  normalizePhone(phone: string): string {
+    return (phone ?? '').replace(/\D/g, '');
+  },
+
+  /** Look up which emails belong to registered users (for Add from contacts). Returns email, user_id, display_name; excludes self and existing friends/pending. */
+  async lookupByEmails(
+    userId: string,
+    emails: string[]
+  ): Promise<{ email: string; user_id: string; display_name: string | null }[]> {
+    const normalized = emails.map((e) => e?.trim().toLowerCase()).filter(Boolean);
+    if (normalized.length === 0) return [];
+    const { data, error } = await supabase.rpc('lookup_users_by_emails', {
+      p_caller_id: userId,
+      p_emails: normalized,
+    });
+    if (error) throw error;
+    return (data ?? []).map((r: { email: string; user_id: string; display_name: string | null }) => ({
+      email: r.email,
+      user_id: r.user_id,
+      display_name: r.display_name,
+    }));
+  },
+
+  /** Look up which phone numbers (digits) belong to registered users. Inputs normalized to digits. Excludes self and existing friends/pending. */
+  async lookupByPhones(
+    userId: string,
+    phones: string[]
+  ): Promise<{ phone: string; user_id: string; display_name: string | null }[]> {
+    const normalized = phones.map((p) => friendHelpers.normalizePhone(p)).filter(Boolean);
+    if (normalized.length === 0) return [];
+    const { data, error } = await supabase.rpc('lookup_users_by_phones', {
+      p_caller_id: userId,
+      p_phones: normalized,
+    });
+    if (error) throw error;
+    return (data ?? []).map((r: { phone: string; user_id: string; display_name: string | null }) => ({
+      phone: r.phone,
+      user_id: r.user_id,
+      display_name: r.display_name,
+    }));
+  },
 };
 
 export type RecommendationReceived = {
@@ -943,5 +986,57 @@ export const feedHelpers = {
     }
     
     return response.data as FeedMoviesResponse;
+  },
+};
+
+/**
+ * TMDB search for "Add to matches" – searches both movies and TV.
+ */
+export interface TmdbSearchResult {
+  tmdb_id: number;
+  type: 'movie' | 'tv';
+  title: string;
+  poster_path: string | null;
+  overview: string | null;
+  release_date: string | null;
+  first_air_date: string | null;
+  vote_average: number | null;
+}
+
+export interface TmdbSearchResponse {
+  results: TmdbSearchResult[];
+  page: number;
+  total_pages: number;
+  total_results: number;
+}
+
+export const searchHelpers = {
+  async searchTmdb(query: string, page: number = 1): Promise<TmdbSearchResponse> {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) throw new Error('Not authenticated');
+
+    const response = await supabase.functions.invoke('search_tmdb', {
+      body: { query: query.trim(), page },
+    });
+
+    if (response.error) {
+      const err = response.error as any;
+      const status = err?.status ?? err?.context?.status;
+      const body = response.data as any;
+      const msg = body?.error ?? body?.message ?? response.error.message ?? 'Search failed';
+      const fullMsg = status ? `Search failed (${status}): ${msg}` : msg;
+      if (__DEV__ && (body || status)) {
+        console.warn('search_tmdb response:', { status, data: body, error: response.error });
+      }
+      throw new Error(fullMsg);
+    }
+
+    const data = response.data as TmdbSearchResponse;
+    return {
+      results: data?.results ?? [],
+      page: data?.page ?? 1,
+      total_pages: data?.total_pages ?? 0,
+      total_results: data?.total_results ?? 0,
+    };
   },
 };

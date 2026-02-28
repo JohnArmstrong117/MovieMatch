@@ -9,13 +9,15 @@ import {
   Modal,
   Pressable,
   TextInput,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useFocusEffect } from 'expo-router';
 import { useAuth } from '@/contexts/auth-context';
 import { useThemeColor } from '@/hooks/use-theme-color';
-import { matchHelpers, genreHelpers } from '@/lib/db-helpers';
-import type { TMDBGenre } from '@/lib/db-helpers';
+import { matchHelpers, genreHelpers, searchHelpers, titleHelpers, swipeHelpers } from '@/lib/db-helpers';
+import type { TMDBGenre, TmdbSearchResult } from '@/lib/db-helpers';
 import { ThemedView } from '@/components/themed-view';
 import { ThemedText } from '@/components/themed-text';
 import { MovieDetailModal } from '@/components/movie-detail-modal';
@@ -44,6 +46,11 @@ export default function MatchesScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [detailVisible, setDetailVisible] = useState(false);
   const [selectedMatch, setSelectedMatch] = useState<any | null>(null);
+  const [addModalVisible, setAddModalVisible] = useState(false);
+  const [addSearchQuery, setAddSearchQuery] = useState('');
+  const [addSearchResults, setAddSearchResults] = useState<TmdbSearchResult[]>([]);
+  const [addSearchLoading, setAddSearchLoading] = useState(false);
+  const [addAddingId, setAddAddingId] = useState<string | null>(null);
 
   useEffect(() => {
     if (user) {
@@ -60,6 +67,72 @@ export default function MatchesScreen() {
       }
     }, [user, mediaType])
   );
+
+  // Debounced TMDB search when "Add to matches" modal is open
+  useEffect(() => {
+    if (!addModalVisible) return;
+    const q = addSearchQuery.trim();
+    if (q.length < 2) {
+      setAddSearchResults([]);
+      return;
+    }
+    const t = setTimeout(async () => {
+      setAddSearchLoading(true);
+      try {
+        const res = await searchHelpers.searchTmdb(q, 1);
+        setAddSearchResults(res.results);
+      } catch (e) {
+        console.error('Add search error:', e);
+        setAddSearchResults([]);
+      } finally {
+        setAddSearchLoading(false);
+      }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [addModalVisible, addSearchQuery]);
+
+  const handleAddToMatches = async (item: TmdbSearchResult) => {
+    if (!user) return;
+    const key = `${item.type}-${item.tmdb_id}`;
+    if (addAddingId === key) return;
+    setAddAddingId(key);
+    try {
+      await titleHelpers.upsertTitle({
+        tmdb_id: item.tmdb_id,
+        type: item.type,
+        title: item.title,
+        poster_path: item.poster_path,
+        overview: item.overview ?? undefined,
+        release_date: item.release_date ?? undefined,
+        first_air_date: item.first_air_date ?? undefined,
+        vote_average: item.vote_average ?? undefined,
+        adult: false,
+        metadata: {},
+      });
+      await swipeHelpers.createSwipe({
+        user_id: user.id,
+        tmdb_id: item.tmdb_id,
+        type: item.type,
+        decision: 'like',
+      });
+      await matchHelpers.createMatch(user.id, item.tmdb_id, item.type);
+      setAddModalVisible(false);
+      setAddSearchQuery('');
+      setAddSearchResults([]);
+      loadMatches();
+    } catch (err: any) {
+      if (err?.code === '23505') {
+        setAddModalVisible(false);
+        setAddSearchQuery('');
+        setAddSearchResults([]);
+        loadMatches();
+      } else {
+        console.error('Add to matches error:', err);
+      }
+    } finally {
+      setAddAddingId(null);
+    }
+  };
 
   const loadMatches = async () => {
     if (!user) return;
@@ -225,6 +298,15 @@ export default function MatchesScreen() {
             </ThemedText>
           ) : null}
         </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.addButton}
+          onPress={() => {
+            setAddSearchQuery('');
+            setAddSearchResults([]);
+            setAddModalVisible(true);
+          }}>
+          <ThemedText style={styles.addButtonText}>+ Add</ThemedText>
+        </TouchableOpacity>
       </View>
 
       <View style={styles.searchRow}>
@@ -325,6 +407,103 @@ export default function MatchesScreen() {
             </ScrollView>
           </ThemedView>
         </View>
+      </Modal>
+
+      <Modal
+        visible={addModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setAddModalVisible(false)}>
+        <Pressable
+          style={styles.modalBackdrop}
+          onPress={() => setAddModalVisible(false)}
+        />
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.addModalKeyboardWrap}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 24}
+        >
+          <View style={styles.addModalContent}>
+            <ThemedView style={styles.addModalInner}>
+              <View style={styles.modalHeader}>
+              <ThemedText type="title" style={styles.modalTitle}>
+                Add to matches
+              </ThemedText>
+              <TouchableOpacity
+                style={styles.modalDoneButton}
+                onPress={() => setAddModalVisible(false)}>
+                <ThemedText style={styles.modalDoneText}>Cancel</ThemedText>
+              </TouchableOpacity>
+            </View>
+            <TextInput
+              style={[
+                styles.addSearchInput,
+                {
+                  backgroundColor: searchInputBg,
+                  borderColor: searchInputBorder,
+                  color: searchInputText,
+                },
+              ]}
+              placeholder="Search movies and TV shows..."
+              placeholderTextColor="#888"
+              value={addSearchQuery}
+              onChangeText={setAddSearchQuery}
+              autoCapitalize="none"
+              autoCorrect={false}
+              returnKeyType="search"
+            />
+            {addSearchLoading ? (
+              <ThemedText style={styles.addSearchHint}>Searching...</ThemedText>
+            ) : addSearchQuery.trim().length >= 2 && addSearchResults.length === 0 ? (
+              <ThemedText style={styles.addSearchHint}>No results. Try a different search.</ThemedText>
+            ) : addSearchQuery.trim().length < 2 ? (
+              <ThemedText style={styles.addSearchHint}>Type at least 2 characters to search.</ThemedText>
+            ) : null}
+            <FlatList
+              data={addSearchResults}
+              keyExtractor={(item) => `${item.type}-${item.tmdb_id}`}
+              style={styles.addResultsList}
+              keyboardShouldPersistTaps="handled"
+              renderItem={({ item }) => {
+                const posterUrl = item.poster_path
+                  ? `https://image.tmdb.org/t/p/w154${item.poster_path}`
+                  : null;
+                const key = `${item.type}-${item.tmdb_id}`;
+                const adding = addAddingId === key;
+                return (
+                  <TouchableOpacity
+                    style={styles.addResultRow}
+                    onPress={() => handleAddToMatches(item)}
+                    disabled={adding}
+                  >
+                    {posterUrl ? (
+                      <Image source={{ uri: posterUrl }} style={styles.addResultPoster} contentFit="cover" />
+                    ) : (
+                      <View style={[styles.addResultPoster, styles.posterPlaceholder]}>
+                        <ThemedText style={styles.addResultPlaceholderText}>?</ThemedText>
+                      </View>
+                    )}
+                    <View style={styles.addResultInfo}>
+                      <ThemedText type="subtitle" style={styles.addResultTitle} numberOfLines={2}>
+                        {item.title}
+                      </ThemedText>
+                      <ThemedText style={styles.addResultType}>
+                        {item.type === 'movie' ? 'Movie' : 'TV Series'}
+                        {(item.release_date || item.first_air_date) && ` · ${(item.release_date || item.first_air_date)?.slice(0, 4)}`}
+                      </ThemedText>
+                    </View>
+                    {adding ? (
+                      <ThemedText style={styles.addResultAdding}>Adding…</ThemedText>
+                    ) : (
+                      <ThemedText style={styles.addResultAddLabel}>Add</ThemedText>
+                    )}
+                  </TouchableOpacity>
+                );
+              }}
+            />
+            </ThemedView>
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       <MovieDetailModal
@@ -465,9 +644,24 @@ const styles = StyleSheet.create({
     paddingTop: 16,
   },
   filterButtonRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
     paddingHorizontal: 16,
     paddingVertical: 10,
     paddingBottom: 8,
+  },
+  addButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    backgroundColor: '#e01245',
+  },
+  addButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#fff',
   },
   searchRow: {
     paddingHorizontal: 16,
@@ -482,6 +676,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   filterButton: {
+    flex: 1,
     paddingVertical: 12,
     paddingHorizontal: 16,
     borderRadius: 12,
@@ -498,7 +693,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   filterButtonTextActive: {
-    color: '#0a7ea4',
+    color: '#e01245',
   },
   filterButtonSummary: {
     fontSize: 12,
@@ -508,6 +703,20 @@ const styles = StyleSheet.create({
   modalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.4)',
+  },
+  addModalKeyboardWrap: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    maxHeight: '90%',
+  },
+  addModalContent: {
+    flex: 1,
+    maxHeight: '100%',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    overflow: 'hidden',
   },
   modalContent: {
     position: 'absolute',
@@ -544,11 +753,78 @@ const styles = StyleSheet.create({
   modalDoneText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#0a7ea4',
+    color: '#e01245',
   },
   modalScroll: {
     paddingHorizontal: 20,
     paddingTop: 16,
+  },
+  addModalInner: {
+    flex: 1,
+    paddingBottom: 24,
+    minHeight: 360,
+    maxHeight: '85%',
+  },
+  addSearchInput: {
+    height: 44,
+    marginHorizontal: 20,
+    marginTop: 12,
+    marginBottom: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    fontSize: 16,
+  },
+  addSearchHint: {
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    fontSize: 14,
+    opacity: 0.8,
+  },
+  addResultsList: {
+    flex: 1,
+    marginTop: 8,
+    paddingHorizontal: 20,
+  },
+  addResultRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(0,0,0,0.06)',
+  },
+  addResultPoster: {
+    width: 52,
+    height: 78,
+    borderRadius: 8,
+  },
+  addResultInfo: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  addResultTitle: {
+    fontSize: 16,
+  },
+  addResultType: {
+    fontSize: 13,
+    opacity: 0.8,
+    marginTop: 2,
+  },
+  addResultAdding: {
+    fontSize: 14,
+    opacity: 0.7,
+    marginLeft: 8,
+  },
+  addResultAddLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#e01245',
+    marginLeft: 8,
+  },
+  addResultPlaceholderText: {
+    fontSize: 18,
+    opacity: 0.6,
   },
   filterLabel: {
     fontSize: 12,
@@ -569,7 +845,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.06)',
   },
   genreChipActive: {
-    backgroundColor: '#0a7ea4',
+    backgroundColor: '#e01245',
   },
   genreChipText: {
     fontSize: 14,
@@ -590,7 +866,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.06)',
   },
   watchedChipActive: {
-    backgroundColor: '#0a7ea4',
+    backgroundColor: '#e01245',
   },
   watchedChipText: {
     fontSize: 14,
@@ -611,7 +887,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.06)',
   },
   sortChipActive: {
-    backgroundColor: '#0a7ea4',
+    backgroundColor: '#e01245',
   },
   sortChipText: {
     fontSize: 14,
