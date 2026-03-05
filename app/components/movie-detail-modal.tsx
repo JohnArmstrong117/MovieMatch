@@ -12,6 +12,7 @@ import {
 import { Image as ExpoImage } from 'expo-image';
 import { getSupabaseUrl, getSupabaseAnonKey } from '@/lib/supabase';
 import { useAuth } from '@/contexts/auth-context';
+import { useThemeColor } from '@/hooks/use-theme-color';
 import { streamingServiceHelpers } from '@/lib/db-helpers';
 import type { TMDBProvider } from '@/lib/db-helpers';
 import { ThemedText } from './themed-text';
@@ -48,6 +49,9 @@ interface MovieDetailModalProps {
   matchId?: string | null;
   watched?: boolean;
   onToggleWatched?: () => void;
+  /** User's personal star rating (1–5). When with onRate, shows star selector. */
+  rating?: number | null;
+  onRate?: (stars: number) => void;
   /** If provided and not in matches, show "Add to my matches" button */
   onAddToMatches?: () => void | Promise<void>;
   isInMyMatches?: boolean;
@@ -63,14 +67,26 @@ export function MovieDetailModal({
   matchId,
   watched = false,
   onToggleWatched,
+  rating = null,
+  onRate,
   onAddToMatches,
   isInMyMatches = false,
   senderName,
   senderMessage,
 }: MovieDetailModalProps) {
   const { user } = useAuth();
+  const watchedButtonBorderColor = useThemeColor(
+    { light: 'rgba(0,0,0,0.18)', dark: 'rgba(255,255,255,0.9)' },
+    'text'
+  );
+  const watchedButtonActiveBorderColor = useThemeColor(
+    { light: '#2acc2a', dark: 'rgba(255,255,255,0.9)' },
+    'text'
+  );
   const [providers, setProviders] = useState<WatchProviderInfo[]>([]);
   const [loadingProviders, setLoadingProviders] = useState(false);
+  const [topCast, setTopCast] = useState<string[]>([]);
+  const [loadingCast, setLoadingCast] = useState(false);
   /** User's selected providers (feed is filtered by these); shown when TMDB returns no per-title data */
   const [userProviders, setUserProviders] = useState<TMDBProvider[]>([]);
 
@@ -78,6 +94,7 @@ export function MovieDetailModal({
     if (!visible || !item) {
       setProviders([]);
       setUserProviders([]);
+      setTopCast([]);
       return;
     }
     let cancelled = false;
@@ -112,6 +129,46 @@ export function MovieDetailModal({
       .catch((err) => {
         if (__DEV__) console.warn('get_watch_providers:', err?.message ?? err);
         if (!cancelled) setLoadingProviders(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, item?.tmdb_id, item?.type]);
+
+  useEffect(() => {
+    if (!visible || !item) {
+      setTopCast([]);
+      setLoadingCast(false);
+      return;
+    }
+    let cancelled = false;
+    setLoadingCast(true);
+    setTopCast([]);
+    const url = `${getSupabaseUrl()}/functions/v1/get_credits`;
+    const anonKey = getSupabaseAnonKey();
+    fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${anonKey}`,
+      },
+      body: JSON.stringify({ tmdb_id: item.tmdb_id, type: item.type }),
+    })
+      .then(async (res) => {
+        let data: { cast?: string[] } = {};
+        try {
+          data = await res.json();
+        } catch {
+          // ignore
+        }
+        if (!cancelled) {
+          setLoadingCast(false);
+          const cast = Array.isArray(data?.cast) ? data.cast : [];
+          setTopCast(cast.slice(0, 3));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setLoadingCast(false);
       });
     return () => {
       cancelled = true;
@@ -222,6 +279,11 @@ export function MovieDetailModal({
                   style={[
                     styles.watchedButton,
                     watched ? styles.watchedButtonActive : styles.watchedButtonInactive,
+                    {
+                      borderColor: watched
+                        ? watchedButtonActiveBorderColor
+                        : watchedButtonBorderColor,
+                    },
                   ]}
                   onPress={onToggleWatched}>
                   <ThemedText
@@ -232,6 +294,25 @@ export function MovieDetailModal({
                     {watched ? '✓ Watched' : 'Mark as Watched'}
                   </ThemedText>
                 </TouchableOpacity>
+              )}
+
+              {matchId != null && onRate && (
+                <View style={styles.ratingSection}>
+                  <ThemedText style={styles.sectionLabel}>Your rating</ThemedText>
+                  <View style={styles.starRow}>
+                    {[1, 2, 3, 4, 5].map((star) => (
+                      <TouchableOpacity
+                        key={star}
+                        onPress={() => onRate(star)}
+                        style={styles.starTouch}
+                        hitSlop={8}>
+                        <ThemedText style={styles.star}>
+                          {typeof rating === 'number' && rating >= star ? '★' : '☆'}
+                        </ThemedText>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
               )}
 
               {onAddToMatches && !isInMyMatches && (
@@ -257,6 +338,17 @@ export function MovieDetailModal({
                 </>
               ) : (
                 <ThemedText style={styles.overviewMuted}>No description available.</ThemedText>
+              )}
+
+              <ThemedText style={styles.sectionLabel}>Top Cast</ThemedText>
+              {loadingCast ? (
+                <ActivityIndicator size="small" style={styles.castLoader} />
+              ) : topCast.length > 0 ? (
+                <ThemedText style={styles.topCastText}>
+                  {topCast.join(', ')}
+                </ThemedText>
+              ) : (
+                <ThemedText style={styles.overviewMuted}>No cast information available.</ThemedText>
               )}
 
               <ThemedText style={styles.sectionLabel}>Where to watch (US)</ThemedText>
@@ -457,6 +549,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 20,
     marginBottom: 16,
+    borderWidth: 2,
   },
   watchedButtonActive: {
     backgroundColor: '#44ff44',
@@ -470,6 +563,22 @@ const styles = StyleSheet.create({
   },
   watchedButtonTextActive: {
     color: '#000',
+  },
+  ratingSection: {
+    marginBottom: 16,
+  },
+  starRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  starTouch: {
+    padding: 4,
+  },
+  star: {
+    fontSize: 28,
+    opacity: 0.95,
+    paddingTop: 10,
   },
   addToMatchesButton: {
     alignSelf: 'flex-start',
@@ -533,6 +642,15 @@ const styles = StyleSheet.create({
   overviewMuted: {
     fontSize: 15,
     opacity: 0.7,
+    marginBottom: 20,
+  },
+  castLoader: {
+    marginVertical: 6,
+  },
+  topCastText: {
+    fontSize: 15,
+    lineHeight: 22,
+    opacity: 0.95,
     marginBottom: 20,
   },
   providerLoader: {

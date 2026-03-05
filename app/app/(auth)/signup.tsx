@@ -1,5 +1,15 @@
 import { useState } from 'react';
-import { StyleSheet, TextInput, TouchableOpacity, View, Alert, ActivityIndicator } from 'react-native';
+import {
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+  View,
+  Alert,
+  ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+} from 'react-native';
 import { Link, useRouter } from 'expo-router';
 
 import { ThemedText } from '@/components/themed-text';
@@ -50,15 +60,24 @@ export default function SignUpScreen() {
 
   return (
     <ThemedView style={styles.container}>
-      <ThemedView style={styles.content}>
-        <ThemedText type="title" style={styles.title}>
-          Create Account
-        </ThemedText>
-        <ThemedText style={styles.subtitle}>
-          Sign up to get started with MovieMatch
-        </ThemedText>
+      <KeyboardAvoidingView
+        style={styles.keyboardAvoid}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}>
+        <ScrollView
+          style={styles.scroll}
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          showsVerticalScrollIndicator={false}>
+          <ThemedText type="title" style={styles.title}>
+            Create Account
+          </ThemedText>
+          <ThemedText style={styles.subtitle}>
+            Sign up to get started with MovieMatch
+          </ThemedText>
 
-        <View style={styles.form}>
+          <View style={styles.form}>
           <TextInput
             style={styles.input}
             placeholder="Full Name"
@@ -124,17 +143,18 @@ export default function SignUpScreen() {
               <ThemedText style={styles.buttonText}>Sign Up</ThemedText>
             )}
           </TouchableOpacity>
-        </View>
+          </View>
 
-        <View style={styles.footer}>
-          <ThemedText>Already have an account? </ThemedText>
-          <Link href="/(auth)/login" asChild>
-            <TouchableOpacity>
-              <ThemedText type="link">Login</ThemedText>
-            </TouchableOpacity>
-          </Link>
-        </View>
-      </ThemedView>
+          <View style={styles.footer}>
+            <ThemedText>Already have an account? </ThemedText>
+            <Link href="/(auth)/login" asChild>
+              <TouchableOpacity>
+                <ThemedText type="link">Login</ThemedText>
+              </TouchableOpacity>
+            </Link>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </ThemedView>
   );
 }
@@ -142,11 +162,18 @@ export default function SignUpScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    paddingTop: 15,
   },
-  content: {
+  keyboardAvoid: {
     flex: 1,
+  },
+  scroll: {
+    flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
     padding: 20,
-    justifyContent: 'center',
+    paddingBottom: 40,
   },
   title: {
     marginBottom: 8,

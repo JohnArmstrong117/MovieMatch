@@ -1,5 +1,14 @@
 import { useState } from 'react';
-import { StyleSheet, TextInput, TouchableOpacity, View, Alert, ActivityIndicator } from 'react-native';
+import {
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+  TouchableWithoutFeedback,
+  View,
+  Alert,
+  ActivityIndicator,
+  Keyboard,
+} from 'react-native';
 import { Link, useRouter } from 'expo-router';
 
 import { ThemedText } from '@/components/themed-text';
@@ -32,7 +41,8 @@ export default function LoginScreen() {
 
   return (
     <ThemedView style={styles.container}>
-      <ThemedView style={styles.content}>
+      <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+        <ThemedView style={styles.content}>
         <ThemedText type="title" style={styles.title}>
           Welcome Back
         </ThemedText>
@@ -102,7 +112,8 @@ export default function LoginScreen() {
             Make sure Supabase is running locally
           </ThemedText>
         </ThemedView>
-      </ThemedView>
+        </ThemedView>
+      </TouchableWithoutFeedback>
     </ThemedView>
   );
 }

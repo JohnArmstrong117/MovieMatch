@@ -8,6 +8,7 @@ import { Limelight_400Regular } from '@expo-google-fonts/limelight/400Regular';
 import { AuthGate } from '@/components/auth-gate';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useAuth } from '@/contexts/auth-context';
+import { NotificationCountsProvider } from '@/contexts/notification-counts-context';
 import { friendHelpers } from '@/lib/db-helpers';
 
 const INBOX_LAST_OPENED_KEY = 'inbox_last_opened_at';
@@ -64,29 +65,31 @@ function InboxButton() {
 
 export default function AuthenticatedLayout() {
   const insets = useSafeAreaInsets();
+  const { user } = useAuth();
 
   return (
     <AuthGate>
-      <View style={styles.container}>
-        <View style={[styles.banner, { paddingTop: insets.top + 4, paddingBottom: 6 }]}>
-          <View style={styles.bannerSpacer} />
-          <View style={styles.bannerTitleWrap}>
-            <Text style={styles.bannerText}>FlickSwipe</Text>
+      <NotificationCountsProvider userId={user?.id}>
+        <View style={styles.container}>
+          <View style={[styles.banner, { paddingTop: insets.top + 4, paddingBottom: 6 }]}>
+            <View style={styles.bannerSpacer} />
+            <View style={styles.bannerTitleWrap}>
+              <Text style={styles.bannerText}>FlickSwipe</Text>
+            </View>
+            <InboxButton />
           </View>
-          <InboxButton />
+          <View style={styles.content}>
+            <Stack screenOptions={{ headerShown: false }}>
+              <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+              <Stack.Screen name="shared-with" options={{ headerShown: false }} />
+              <Stack.Screen name="recommend-to" options={{ headerShown: false }} />
+              <Stack.Screen name="inbox" options={{ headerShown: false }} />
+              <Stack.Screen name="contacts" options={{ headerShown: false }} />
+              <Stack.Screen name="(onboarding)" options={{ headerShown: false }} />
+              <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
+            </Stack>
+          </View>
         </View>
-        <View style={styles.content}>
-          <Stack screenOptions={{ headerShown: false }}>
-            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-            <Stack.Screen name="shared-with" options={{ headerShown: false }} />
-            <Stack.Screen name="recommend-to" options={{ headerShown: false }} />
-            <Stack.Screen name="inbox" options={{ headerShown: false }} />
-            <Stack.Screen name="contacts" options={{ headerShown: false }} />
-            <Stack.Screen name="(onboarding)" options={{ headerShown: false }} />
-            <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
-          </Stack>
-        </View>
-      </View>
       </NotificationCountsProvider>
     </AuthGate>
   );

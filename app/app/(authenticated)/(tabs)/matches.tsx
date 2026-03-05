@@ -24,7 +24,7 @@ import { MovieDetailModal } from '@/components/movie-detail-modal';
 import { MediaTypeToggle } from '@/components/media-type-toggle';
 
 type WatchedFilter = 'all' | 'watched' | 'unwatched';
-type SortBy = 'matched' | 'rating';
+type SortBy = 'matched' | 'tmdb_rating' | 'your_rating';
 
 export default function MatchesScreen() {
   const { user } = useAuth();
@@ -220,10 +220,17 @@ export default function MatchesScreen() {
         return title.includes(query) || original.includes(query) || overview.includes(query);
       });
     }
-    if (sortBy === 'rating') {
+    if (sortBy === 'tmdb_rating') {
       list = [...list].sort((a, b) => {
-        const scoreA = a.rating ?? (typeof a.vote_average === 'number' ? a.vote_average / 2 : 0);
-        const scoreB = b.rating ?? (typeof b.vote_average === 'number' ? b.vote_average / 2 : 0);
+        const scoreA = typeof a.vote_average === 'number' ? a.vote_average : -1;
+        const scoreB = typeof b.vote_average === 'number' ? b.vote_average : -1;
+        return scoreB - scoreA;
+      });
+    }
+    if (sortBy === 'your_rating') {
+      list = [...list].sort((a, b) => {
+        const scoreA = typeof a.rating === 'number' ? a.rating : -1;
+        const scoreB = typeof b.rating === 'number' ? b.rating : -1;
         return scoreB - scoreA;
       });
     }
@@ -280,7 +287,7 @@ export default function MatchesScreen() {
   const filterSummary =
     (filterGenreIds.length ? `${filterGenreIds.length} genre(s)` : '') +
     (filterWatched !== 'all' ? (filterGenreIds.length ? ' · ' : '') + (filterWatched === 'watched' ? 'Watched' : 'Not watched') : '') +
-    (sortBy !== 'matched' ? (filterGenreIds.length || filterWatched !== 'all' ? ' · ' : '') + (sortBy === 'rating' ? 'By rating' : '') : '');
+    (sortBy !== 'matched' ? (filterGenreIds.length || filterWatched !== 'all' ? ' · ' : '') + (sortBy === 'tmdb_rating' ? 'Ratings' : sortBy === 'your_rating' ? 'Your ratings' : '') : '');
 
   return (
     <ThemedView style={styles.container}>
@@ -392,15 +399,23 @@ export default function MatchesScreen() {
                   onPress={() => setSortBy('matched')}>
                   <ThemedText
                     style={[styles.sortChipText, sortBy === 'matched' && styles.sortChipTextActive]}>
-                    Match order
+                    Match Order
                   </ThemedText>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.sortChip, sortBy === 'rating' && styles.sortChipActive]}
-                  onPress={() => setSortBy('rating')}>
+                  style={[styles.sortChip, sortBy === 'tmdb_rating' && styles.sortChipActive]}
+                  onPress={() => setSortBy('tmdb_rating')}>
                   <ThemedText
-                    style={[styles.sortChipText, sortBy === 'rating' && styles.sortChipTextActive]}>
-                    Star rating
+                    style={[styles.sortChipText, sortBy === 'tmdb_rating' && styles.sortChipTextActive]}>
+                    Ratings
+                  </ThemedText>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.sortChip, sortBy === 'your_rating' && styles.sortChipActive]}
+                  onPress={() => setSortBy('your_rating')}>
+                  <ThemedText
+                    style={[styles.sortChipText, sortBy === 'your_rating' && styles.sortChipTextActive]}>
+                    Your Ratings
                   </ThemedText>
                 </TouchableOpacity>
               </View>
@@ -539,9 +554,25 @@ export default function MatchesScreen() {
                   selectedMatch.tmdb_id,
                   selectedMatch.type
                 );
-                setSelectedMatch((prev) =>
+                setSelectedMatch((prev: typeof selectedMatch) =>
                   prev ? { ...prev, watched: !prev.watched } : null
                 );
+              }
+            : undefined
+        }
+        rating={selectedMatch?.rating ?? null}
+        onRate={
+          selectedMatch?.id
+            ? async (stars: number) => {
+                try {
+                  await matchHelpers.updateMatch(selectedMatch.id, { rating: stars });
+                  await loadMatches();
+                  setSelectedMatch((prev: typeof selectedMatch) =>
+                    prev ? { ...prev, rating: stars } : null
+                  );
+                } catch (e) {
+                  console.error('Update rating:', e);
+                }
               }
             : undefined
         }
@@ -605,6 +636,11 @@ export default function MatchesScreen() {
                     </ThemedText>
                   )}
                   <View style={styles.matchMeta}>
+                    {typeof item.rating === 'number' && (
+                      <ThemedText style={styles.metaText}>
+                        ★ {item.rating}/5
+                      </ThemedText>
+                    )}
                     {item.vote_average && (
                       <ThemedText style={styles.metaText}>
                         ⭐ {item.vote_average.toFixed(1)}

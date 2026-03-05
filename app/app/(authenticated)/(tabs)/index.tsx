@@ -24,6 +24,7 @@ export default function SwipeScreen() {
   const [currentPage, setCurrentPage] = useState(1);
   const [detailVisible, setDetailVisible] = useState(false);
   const [selectedTitle, setSelectedTitle] = useState<MockTitle | null>(null);
+  const [genreById, setGenreById] = useState<Map<number, string> | null>(null);
 
   useEffect(() => {
     checkPreferences();
@@ -34,6 +35,20 @@ export default function SwipeScreen() {
       loadTitles();
     }
   }, [hasPreferences, user, mediaType]);
+
+  useEffect(() => {
+    if (!user || !hasPreferences) return;
+    let cancelled = false;
+    genreHelpers.getAll().then((list) => {
+      if (cancelled) return;
+      const map = new Map<number, string>();
+      list.forEach((g: { genre_id: number; name: string }) => map.set(g.genre_id, g.name));
+      setGenreById(map);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [user, hasPreferences]);
 
   // When screen gains focus: only reload if we have no titles (e.g. first load or after preferences change).
   // If we already have a stack (e.g. came back from Matches), keep it so we don't replace it with page 1
@@ -207,6 +222,58 @@ export default function SwipeScreen() {
     }
   };
 
+  const handleSwipeWatched = async () => {
+    if (!user || currentIndex >= titles.length) return;
+
+    const title = titles[currentIndex];
+    try {
+      await titleHelpers.upsertTitle({
+        tmdb_id: title.id,
+        type: title.type,
+        title: title.title,
+        original_title: title.original_title,
+        poster_path: title.poster_path,
+        backdrop_path: title.backdrop_path,
+        overview: title.overview,
+        release_date: title.release_date,
+        first_air_date: title.first_air_date,
+        popularity: title.popularity,
+        vote_average: title.vote_average,
+        vote_count: title.vote_count,
+        adult: false,
+        metadata: { genre_ids: title.genre_ids },
+      });
+
+      console.log(`💾 Saving LIKE swipe (Watched): user_id=${user.id}, tmdb_id=${title.id}, type=${title.type}`);
+      await swipeHelpers.createSwipe({
+        user_id: user.id,
+        tmdb_id: title.id,
+        type: title.type,
+        decision: 'like',
+      });
+
+      try {
+        const match = await matchHelpers.createMatch(user.id, title.id, title.type);
+        await matchHelpers.updateMatch(match.id, { watched: true });
+        console.log(`✅ Created match (watched) for ${title.title}:`, { match_id: match.id });
+      } catch (error: any) {
+        if (error?.code !== '23505') {
+          console.error('❌ Error creating match (watched):', error);
+        }
+      }
+
+      const nextIndex = currentIndex + 1;
+      setCurrentIndex(nextIndex);
+
+      if (nextIndex >= titles.length - 2 && nextIndex < titles.length) {
+        loadMoreTitles();
+      }
+    } catch (error) {
+      console.error('Error saving watched swipe:', error);
+      Alert.alert('Error', 'Failed to save');
+    }
+  };
+
   const handleSwipeLeft = async () => {
     if (!user || currentIndex >= titles.length) return;
 
@@ -352,20 +419,32 @@ export default function SwipeScreen() {
   // Don't reverse: first card (index 0) gets highest zIndex and is the one user sees and interacts with.
   const visibleCards = titles
     .slice(currentIndex, currentIndex + 3)
-    .map((title, index) => (
-      <SwipeCard
-        key={`${title.type}-${title.id}-${currentIndex + index}`}
-        title={title}
-        onSwipeLeft={handleSwipeLeft}
-        onSwipeRight={handleSwipeRight}
-        onDoubleTap={() => {
-          setSelectedTitle(titles[currentIndex]);
-          setDetailVisible(true);
-        }}
-        index={index}
-        total={Math.min(3, titles.length - currentIndex)}
-      />
-    ));
+    .map((title, index) => {
+      const genreNames =
+        title.genre_ids?.length && genreById
+          ? title.genre_ids
+              .map((id) => genreById.get(id))
+              .filter(Boolean)
+              .slice(0, 3)
+              .join(', ') || undefined
+          : undefined;
+      return (
+        <SwipeCard
+          key={`${title.type}-${title.id}-${currentIndex + index}`}
+          title={title}
+          genreNames={genreNames}
+          onSwipeLeft={handleSwipeLeft}
+          onSwipeRight={handleSwipeRight}
+          onSwipeUp={handleSwipeWatched}
+          onDoubleTap={() => {
+            setSelectedTitle(titles[currentIndex]);
+            setDetailVisible(true);
+          }}
+          index={index}
+          total={Math.min(3, titles.length - currentIndex)}
+        />
+      );
+    });
 
   const detailItem = selectedTitle
     ? {
@@ -399,6 +478,9 @@ export default function SwipeScreen() {
       <View style={styles.actionButtons} collapsable={false}>
         <TouchableOpacity style={[styles.actionButton, styles.passButton]} onPress={handleSwipeLeft}>
           <ThemedText style={styles.actionButtonText}>✕</ThemedText>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.actionButton, styles.watchedButton]} onPress={handleSwipeWatched}>
+          <ThemedText style={styles.actionButtonText}>✓</ThemedText>
         </TouchableOpacity>
         <TouchableOpacity style={[styles.actionButton, styles.likeButton]} onPress={handleSwipeRight}>
           <ThemedText style={styles.actionButtonText}>♥</ThemedText>
@@ -458,7 +540,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     direction: 'ltr',
     justifyContent: 'center',
-    gap: 32,
+    gap: 15,
     paddingVertical: 14,
     paddingBottom: 10,
   },
@@ -476,6 +558,9 @@ const styles = StyleSheet.create({
   },
   passButton: {
     backgroundColor: '#ff4444',
+  },
+  watchedButton: {
+    backgroundColor: '#77d9e6',
   },
   likeButton: {
     backgroundColor: '#44ff44',

@@ -18,6 +18,7 @@ import type { TMDBGenre } from '@/lib/db-helpers';
 import { ThemedView } from '@/components/themed-view';
 import { ThemedText } from '@/components/themed-text';
 import { MovieDetailModal } from '@/components/movie-detail-modal';
+import { MediaTypeToggle } from '@/components/media-type-toggle';
 import { profileHelpers } from '@/lib/db-helpers';
 import { matchHelpers } from '@/lib/db-helpers';
 
@@ -43,6 +44,7 @@ export default function SharedWithFriendScreen() {
   const [filterWatched, setFilterWatched] = useState<WatchedFilter>('all');
   const [sortBy, setSortBy] = useState<SortBy>('matched');
   const [filterMenuVisible, setFilterMenuVisible] = useState(false);
+  const [mediaType, setMediaType] = useState<'movie' | 'tv'>('movie');
   const [searchQuery, setSearchQuery] = useState('');
   const [detailVisible, setDetailVisible] = useState(false);
   const [selectedMatch, setSelectedMatch] = useState<any | null>(null);
@@ -79,21 +81,23 @@ export default function SharedWithFriendScreen() {
   };
 
   const filteredAndSortedMatches = useMemo(() => {
-    let list = matches.map((item) => {
-      let ids = item.genre_ids;
-      if (Array.isArray(ids)) {
-      } else if (typeof ids === 'string') {
-        try {
-          const parsed = JSON.parse(ids);
-          ids = Array.isArray(parsed) ? parsed : [];
-        } catch {
+    let list = matches
+      .filter((item) => item.type === mediaType)
+      .map((item) => {
+        let ids = item.genre_ids;
+        if (Array.isArray(ids)) {
+        } else if (typeof ids === 'string') {
+          try {
+            const parsed = JSON.parse(ids);
+            ids = Array.isArray(parsed) ? parsed : [];
+          } catch {
+            ids = [];
+          }
+        } else {
           ids = [];
         }
-      } else {
-        ids = [];
-      }
-      return { ...item, genre_ids: Array.isArray(ids) ? ids : [] };
-    });
+        return { ...item, genre_ids: Array.isArray(ids) ? ids : [] };
+      });
     if (filterGenreIds.length > 0) {
       list = list.filter((item) =>
         (item.genre_ids || []).some((id: number) => filterGenreIds.includes(id))
@@ -118,7 +122,7 @@ export default function SharedWithFriendScreen() {
       });
     }
     return list;
-  }, [matches, filterGenreIds, filterWatched, sortBy, searchQuery]);
+  }, [matches, mediaType, filterGenreIds, filterWatched, sortBy, searchQuery]);
 
   const handleToggleWatched = async (
     matchId: string | null,
@@ -178,6 +182,8 @@ export default function SharedWithFriendScreen() {
           Shared with {friendName}
         </ThemedText>
       </View>
+
+      <MediaTypeToggle value={mediaType} onChange={setMediaType} />
 
       <View style={styles.filterButtonRow}>
         <TouchableOpacity

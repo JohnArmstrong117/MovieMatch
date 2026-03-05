@@ -16,21 +16,26 @@ import { ThemedText } from './themed-text';
 import { ThemedView } from './themed-view';
 import type { MockTitle } from '@/lib/mock-tmdb';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 const CARD_WIDTH = SCREEN_WIDTH - 40;
 const CARD_HEIGHT = CARD_WIDTH * 1.5;
 const SWIPE_THRESHOLD = 100;
+const SWIPE_UP_THRESHOLD = 80;
 
 interface SwipeCardProps {
   title: MockTitle;
   onSwipeLeft: () => void;
   onSwipeRight: () => void;
+  /** Called when user swipes card straight up (add to matches as watched) */
+  onSwipeUp?: () => void;
   onDoubleTap?: () => void;
   index: number;
   total: number;
+  /** Comma-separated genre names to show in top left (e.g. "Drama, Comedy") */
+  genreNames?: string;
 }
 
-export function SwipeCard({ title, onSwipeLeft, onSwipeRight, onDoubleTap, index, total }: SwipeCardProps) {
+export function SwipeCard({ title, onSwipeLeft, onSwipeRight, onSwipeUp, onDoubleTap, index, total, genreNames }: SwipeCardProps) {
   const translateX = useSharedValue(0);
   const translateY = useSharedValue(0);
   const scale = useSharedValue(1);
@@ -54,15 +59,21 @@ export function SwipeCard({ title, onSwipeLeft, onSwipeRight, onDoubleTap, index
     });
   };
 
+  const triggerSwipeUp = () => {
+    if (onSwipeUp) {
+      requestAnimationFrame(() => onSwipeUp());
+    }
+  };
+
   const triggerDoubleTap = () => {
     if (onDoubleTap) {
       requestAnimationFrame(() => onDoubleTap());
     }
   };
 
-  const doubleTapGesture = Gesture.Tap()
+  const tapGesture = Gesture.Tap()
     .enabled(isTopCard && !!onDoubleTap)
-    .numberOfTaps(2)
+    .numberOfTaps(1)
     .onEnd(() => {
       runOnJS(triggerDoubleTap)();
     });
@@ -87,11 +98,25 @@ export function SwipeCard({ title, onSwipeLeft, onSwipeRight, onDoubleTap, index
       );
     })
     .onEnd((event) => {
-      const swipeDistance = event.translationX;
+      const translationX = event.translationX;
+      const translationY = event.translationY;
+      const isSwipeUp =
+        onSwipeUp &&
+        translationY < -SWIPE_UP_THRESHOLD &&
+        Math.abs(translationY) >= Math.abs(translationX);
 
-      if (Math.abs(swipeDistance) > SWIPE_THRESHOLD) {
-        const direction = swipeDistance > 0 ? 'right' : 'left';
+      if (isSwipeUp) {
+        translateY.value = withSpring(-SCREEN_HEIGHT);
+        translateX.value = withSpring(0);
+        scale.value = withSpring(0.9);
+        runOnJS(triggerHaptic)();
+        opacity.value = withSpring(0, {}, () => {
+          runOnJS(triggerSwipeUp)();
+        });
+      } else if (Math.abs(translationX) > SWIPE_THRESHOLD) {
+        const direction = translationX > 0 ? 'right' : 'left';
         translateX.value = withSpring(direction === 'right' ? SCREEN_WIDTH : -SCREEN_WIDTH);
+        translateY.value = withSpring(0);
         runOnJS(triggerHaptic)();
         opacity.value = withSpring(0, {}, () => {
           if (direction === 'right') {
@@ -107,7 +132,7 @@ export function SwipeCard({ title, onSwipeLeft, onSwipeRight, onDoubleTap, index
       }
     });
 
-  const composedGesture = Gesture.Race(panGesture, doubleTapGesture);
+  const composedGesture = Gesture.Race(panGesture, tapGesture);
 
   const animatedCardStyle = useAnimatedStyle(() => {
     const rotation = interpolate(
@@ -149,6 +174,17 @@ export function SwipeCard({ title, onSwipeLeft, onSwipeRight, onDoubleTap, index
     return { opacity };
   });
 
+  const upOverlayStyle = useAnimatedStyle(() => {
+    // Input range must be increasing: rest (0) -> up (-threshold) -> far up
+    const opacity = interpolate(
+      translateY.value,
+      [-SCREEN_HEIGHT / 3, -SWIPE_UP_THRESHOLD, 0],
+      [1, 0.5, 0],
+      Extrapolate.CLAMP
+    );
+    return { opacity };
+  });
+
   const posterUrl = title.poster_path
     ? `https://image.tmdb.org/t/p/w500${title.poster_path}`
     : null;
@@ -170,6 +206,14 @@ export function SwipeCard({ title, onSwipeLeft, onSwipeRight, onDoubleTap, index
               <ThemedText>No Image</ThemedText>
             </View>
           )}
+
+          {genreNames ? (
+            <View style={styles.genreBadge}>
+              <ThemedText style={styles.genreText} numberOfLines={2}>
+                {genreNames}
+              </ThemedText>
+            </View>
+          ) : null}
 
           {/* Gradient overlay for text readability */}
           <View style={styles.gradientOverlay}>
@@ -205,6 +249,14 @@ export function SwipeCard({ title, onSwipeLeft, onSwipeRight, onDoubleTap, index
               LIKE
             </ThemedText>
           </Animated.View>
+
+          {onSwipeUp ? (
+            <Animated.View style={[styles.swipeOverlay, styles.watchedOverlay, upOverlayStyle]}>
+              <ThemedText type="title" style={styles.swipeLabel}>
+                WATCHED
+              </ThemedText>
+            </Animated.View>
+          ) : null}
         </ThemedView>
       </Animated.View>
     </GestureDetector>
@@ -238,6 +290,21 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  genreBadge: {
+    position: 'absolute',
+    top: 12,
+    left: 12,
+    maxWidth: '60%',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+  },
+  genreText: {
+    color: '#fff',
+    fontSize: 12,
+    opacity: 0.95,
+  },
   gradientOverlay: {
     position: 'absolute',
     bottom: 0,
@@ -260,7 +327,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     padding: 20,
-    paddingBottom: 30,
+    paddingBottom: 20,
   },
   title: {
     color: '#fff',
@@ -302,6 +369,10 @@ const styles = StyleSheet.create({
   likeOverlay: {
     borderColor: '#44ff44',
     backgroundColor: 'rgba(68, 255, 68, 0.1)',
+  },
+  watchedOverlay: {
+    borderColor: '#4488ff',
+    backgroundColor: 'rgba(68, 136, 255, 0.1)',
   },
   swipeLabel: {
     fontSize: 32,
