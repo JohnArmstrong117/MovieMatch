@@ -36,7 +36,7 @@ type ContactItem = {
   displayName?: string | null;
 };
 
-const INVITE_MESSAGE = "I'm using FlickSwipe to discover movies and TV shows. Join me and we can share recommendations!";
+const INVITE_MESSAGE = "I'm using Meesh to discover movies and TV shows. Join me and we can share recommendations!";
 const INVITE_URL = 'https://apps.apple.com/app/flickswipe'; // Replace with your App Store / Play Store link or universal link
 
 export default function ContactsScreen() {
@@ -165,7 +165,7 @@ export default function ContactsScreen() {
     try {
       await Share.share({
         message: `${INVITE_MESSAGE}\n\n${INVITE_URL}`,
-        title: 'Join FlickSwipe',
+        title: 'Join Meesh',
         url: INVITE_URL,
       });
     } catch (e) {
@@ -196,7 +196,7 @@ export default function ContactsScreen() {
       ) : permissionStatus !== 'granted' ? (
         <View style={styles.centered}>
           <ThemedText style={styles.helper}>
-            Allow access to your contacts to find friends on FlickSwipe or invite them to join.
+            Allow access to your contacts to find friends on Meesh or invite them to join.
           </ThemedText>
           <TouchableOpacity style={styles.primaryButton} onPress={requestPermission}>
             <ThemedText style={styles.primaryButtonText}>Allow access to contacts</ThemedText>
@@ -207,7 +207,7 @@ export default function ContactsScreen() {
           {lookupLoading && (
             <View style={styles.loaderRow}>
               <ActivityIndicator size="small" />
-              <ThemedText style={styles.helper}>Checking who's on FlickSwipe…</ThemedText>
+              <ThemedText style={styles.helper}>Checking who's on Meesh…</ThemedText>
             </View>
           )}
           {contacts.length > 0 && (
@@ -287,7 +287,7 @@ const styles = StyleSheet.create({
   },
   backButtonText: {
     fontSize: 16,
-    color: '#e01245',
+    color: '#c41010',
     fontWeight: '600',
   },
   title: {
@@ -328,7 +328,7 @@ const styles = StyleSheet.create({
     marginTop: 24,
     paddingVertical: 14,
     paddingHorizontal: 24,
-    backgroundColor: '#e01245',
+    backgroundColor: '#c41010',
     borderRadius: 12,
   },
   primaryButtonText: {
@@ -366,7 +366,7 @@ const styles = StyleSheet.create({
   addButton: {
     paddingVertical: 8,
     paddingHorizontal: 14,
-    backgroundColor: '#e01245',
+    backgroundColor: '#c41010',
     borderRadius: 8,
     minWidth: 100,
     alignItems: 'center',

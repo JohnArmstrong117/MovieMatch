@@ -9,7 +9,11 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.anonymous.app",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -19,7 +23,12 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.READ_CONTACTS",
+        "android.permission.WRITE_CONTACTS"
+      ],
+      "package": "com.anonymous.app"
     },
     "web": {
       "output": "static",
@@ -42,7 +51,14 @@
       [
         "expo-contacts",
         {
-          "contactsPermission": "Allow FlickSwipe to access your contacts to find friends and invite them to the app."
+          "contactsPermission": "Allow Meesh to access your contacts to find friends and invite them to the app."
+        }
+      ],
+      [
+        "react-native-google-mobile-ads",
+        {
+          "androidAppId": "ca-app-pub-8829125322462367~6703328775",
+          "iosAppId": "ca-app-pub-8829125322462367~7114364063"
         }
       ],
       "expo-font"
@@ -50,6 +66,12 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "8dcfb836-eabc-4e25-b496-832fc5beffca"
+      }
     }
   }
 }

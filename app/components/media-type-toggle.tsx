@@ -11,7 +11,7 @@ type MediaTypeToggleProps = {
 };
 
 export function MediaTypeToggle({ value, onChange }: MediaTypeToggleProps) {
-  const activeBg = useThemeColor({ light: '#e01245', dark: '#e83d65' }, 'background');
+  const activeBg = useThemeColor({ light: '#c41010', dark: '#d65050' }, 'background');
   const activeText = '#fff';
   const inactiveText = useThemeColor({}, 'text');
 

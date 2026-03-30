@@ -1,5 +1,6 @@
 import { Tabs, useFocusEffect } from 'expo-router';
 import React, { useCallback } from 'react';
+import { useFonts } from 'expo-font';
 
 import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
@@ -11,11 +12,19 @@ export default function TabLayout() {
   const colorScheme = useColorScheme();
   const { pendingRequestsCount, refetch } = useNotificationCounts();
 
+  const [fontsLoaded] = useFonts({
+    Limelight: require('../../../assets/fonts/Limelight-Regular.ttf'),
+  });
+
   useFocusEffect(
     useCallback(() => {
       refetch();
     }, [refetch])
   );
+
+  if (!fontsLoaded) {
+    return null;
+  }
 
   return (
     <Tabs

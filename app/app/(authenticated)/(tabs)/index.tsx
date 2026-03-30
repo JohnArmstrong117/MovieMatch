@@ -1,15 +1,28 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { StyleSheet, View, TouchableOpacity, Alert } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useAuth } from '@/contexts/auth-context';
 import { swipeHelpers } from '@/lib/db-helpers';
 import type { MockTitle } from '@/lib/mock-tmdb';
 import { SwipeCard } from '@/components/swipe-card';
+import { AdCard } from '@/components/ad-card';
 import { MovieDetailModal } from '@/components/movie-detail-modal';
 import { ThemedView } from '@/components/themed-view';
 import { ThemedText } from '@/components/themed-text';
 import { genreHelpers, streamingServiceHelpers, titleHelpers, feedHelpers, matchHelpers } from '@/lib/db-helpers';
 import { MediaTypeToggle } from '@/components/media-type-toggle';
+import { NativeAd, TestIds } from 'react-native-google-mobile-ads';
+
+type SwipeDeckItem =
+  | { kind: 'title'; id: string; title: MockTitle }
+  | { kind: 'ad'; id: string };
+
+const AD_INSERTION_INTERVAL = 16;
+// Safety-first: stay on AdMob test ads unless explicitly enabled.
+const USE_REAL_ADS = process.env.EXPO_PUBLIC_ADMOB_USE_REAL_ADS === 'true';
+const NATIVE_AD_UNIT_ID = USE_REAL_ADS
+  ? process.env.EXPO_PUBLIC_ADMOB_NATIVE_AD_UNIT_ID || TestIds.NATIVE
+  : TestIds.NATIVE;
 
 export default function SwipeScreen() {
   const { user } = useAuth();
@@ -25,6 +38,7 @@ export default function SwipeScreen() {
   const [detailVisible, setDetailVisible] = useState(false);
   const [selectedTitle, setSelectedTitle] = useState<MockTitle | null>(null);
   const [genreById, setGenreById] = useState<Map<number, string> | null>(null);
+  const [nativeAdsById, setNativeAdsById] = useState<Record<string, NativeAd>>({});
 
   useEffect(() => {
     checkPreferences();
@@ -167,10 +181,70 @@ export default function SwipeScreen() {
     }
   };
 
-  const handleSwipeRight = async () => {
-    if (!user || currentIndex >= titles.length) return;
+  const swipeDeck = useMemo<SwipeDeckItem[]>(() => {
+    const deck: SwipeDeckItem[] = [];
+    titles.forEach((title, idx) => {
+      deck.push({ kind: 'title', id: `${title.type}-${title.id}`, title });
+      if ((idx + 1) % AD_INSERTION_INTERVAL === 0) {
+        deck.push({
+          kind: 'ad',
+          id: `ad-${mediaType}-${Math.floor((idx + 1) / AD_INSERTION_INTERVAL)}`,
+        });
+      }
+    });
+    return deck;
+  }, [titles, mediaType]);
 
-    const title = titles[currentIndex];
+  const advanceDeck = useCallback(() => {
+    setCurrentIndex((prev) => {
+      const next = prev + 1;
+      if (next >= swipeDeck.length - 2 && next < swipeDeck.length) {
+        loadMoreTitles();
+      }
+      return next;
+    });
+  }, [swipeDeck.length]);
+
+  useEffect(() => {
+    const upcomingAdIds = swipeDeck
+      .slice(currentIndex, currentIndex + 30)
+      .filter((item): item is Extract<SwipeDeckItem, { kind: 'ad' }> => item.kind === 'ad')
+      .map((item) => item.id)
+      .filter((id) => !nativeAdsById[id]);
+
+    if (upcomingAdIds.length === 0) return;
+    let cancelled = false;
+
+    (async () => {
+      for (const adId of upcomingAdIds) {
+        try {
+          const ad = await NativeAd.createForAdRequest(NATIVE_AD_UNIT_ID, {
+            requestNonPersonalizedAdsOnly: true,
+          });
+          if (cancelled) {
+            ad.destroy();
+            continue;
+          }
+          setNativeAdsById((prev) => ({ ...prev, [adId]: ad }));
+        } catch (e) {
+          if (__DEV__) console.warn('Native ad preload failed:', e);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentIndex, swipeDeck, nativeAdsById]);
+
+  useEffect(() => {
+    return () => {
+      Object.values(nativeAdsById).forEach((ad) => ad.destroy());
+    };
+  }, [nativeAdsById]);
+
+  const handleSwipeRight = async (title: MockTitle) => {
+    if (!user) return;
     try {
       await titleHelpers.upsertTitle({
         tmdb_id: title.id,
@@ -210,22 +284,15 @@ export default function SwipeScreen() {
         }
       }
 
-      const nextIndex = currentIndex + 1;
-      setCurrentIndex(nextIndex);
-
-      if (nextIndex >= titles.length - 2 && nextIndex < titles.length) {
-        loadMoreTitles();
-      }
+      advanceDeck();
     } catch (error) {
       console.error('Error saving swipe:', error);
       Alert.alert('Error', 'Failed to save swipe');
     }
   };
 
-  const handleSwipeWatched = async () => {
-    if (!user || currentIndex >= titles.length) return;
-
-    const title = titles[currentIndex];
+  const handleSwipeWatched = async (title: MockTitle) => {
+    if (!user) return;
     try {
       await titleHelpers.upsertTitle({
         tmdb_id: title.id,
@@ -262,22 +329,15 @@ export default function SwipeScreen() {
         }
       }
 
-      const nextIndex = currentIndex + 1;
-      setCurrentIndex(nextIndex);
-
-      if (nextIndex >= titles.length - 2 && nextIndex < titles.length) {
-        loadMoreTitles();
-      }
+      advanceDeck();
     } catch (error) {
       console.error('Error saving watched swipe:', error);
       Alert.alert('Error', 'Failed to save');
     }
   };
 
-  const handleSwipeLeft = async () => {
-    if (!user || currentIndex >= titles.length) return;
-
-    const title = titles[currentIndex];
+  const handleSwipeLeft = async (title: MockTitle) => {
+    if (!user) return;
     try {
       await titleHelpers.upsertTitle({
         tmdb_id: title.id,
@@ -317,12 +377,7 @@ export default function SwipeScreen() {
         }
       }
 
-      const nextIndex = currentIndex + 1;
-      setCurrentIndex(nextIndex);
-
-      if (nextIndex >= titles.length - 2 && nextIndex < titles.length) {
-        loadMoreTitles();
-      }
+      advanceDeck();
     } catch (error) {
       console.error('Error saving swipe:', error);
       Alert.alert('Error', 'Failed to save swipe');
@@ -398,7 +453,7 @@ export default function SwipeScreen() {
     );
   }
 
-  if (titles.length === 0 || currentIndex >= titles.length) {
+  if (titles.length === 0 || currentIndex >= swipeDeck.length) {
     return (
       <ThemedView style={styles.container}>
         <MediaTypeToggle value={mediaType} onChange={setMediaType} />
@@ -417,9 +472,26 @@ export default function SwipeScreen() {
 
   // Top card must be titles[currentIndex] so tap/swipe handlers save the correct title.
   // Don't reverse: first card (index 0) gets highest zIndex and is the one user sees and interacts with.
-  const visibleCards = titles
+  const visibleCards = swipeDeck
     .slice(currentIndex, currentIndex + 3)
-    .map((title, index) => {
+    .map((item, index) => {
+      if (item.kind === 'ad') {
+        const nativeAd = nativeAdsById[item.id];
+        if (!nativeAd) return null;
+        return (
+          <AdCard
+            key={item.id}
+            nativeAd={nativeAd}
+            onSwipeLeft={advanceDeck}
+            onSwipeRight={advanceDeck}
+            onSwipeUp={advanceDeck}
+            index={index}
+            total={Math.min(3, swipeDeck.length - currentIndex)}
+          />
+        );
+      }
+
+      const title = item.title;
       const genreNames =
         title.genre_ids?.length && genreById
           ? title.genre_ids
@@ -430,21 +502,24 @@ export default function SwipeScreen() {
           : undefined;
       return (
         <SwipeCard
-          key={`${title.type}-${title.id}-${currentIndex + index}`}
+          key={`${item.id}-${currentIndex + index}`}
           title={title}
           genreNames={genreNames}
-          onSwipeLeft={handleSwipeLeft}
-          onSwipeRight={handleSwipeRight}
-          onSwipeUp={handleSwipeWatched}
+          onSwipeLeft={() => handleSwipeLeft(title)}
+          onSwipeRight={() => handleSwipeRight(title)}
+          onSwipeUp={() => handleSwipeWatched(title)}
           onDoubleTap={() => {
-            setSelectedTitle(titles[currentIndex]);
+            setSelectedTitle(title);
             setDetailVisible(true);
           }}
           index={index}
-          total={Math.min(3, titles.length - currentIndex)}
+          total={Math.min(3, swipeDeck.length - currentIndex)}
         />
       );
     });
+
+  const currentDeckItem = swipeDeck[currentIndex];
+  const currentTitle = currentDeckItem?.kind === 'title' ? currentDeckItem.title : null;
 
   const detailItem = selectedTitle
     ? {
@@ -476,13 +551,19 @@ export default function SwipeScreen() {
       />
 
       <View style={styles.actionButtons} collapsable={false}>
-        <TouchableOpacity style={[styles.actionButton, styles.passButton]} onPress={handleSwipeLeft}>
+        <TouchableOpacity
+          style={[styles.actionButton, styles.passButton]}
+          onPress={() => (currentTitle ? handleSwipeLeft(currentTitle) : advanceDeck())}>
           <ThemedText style={styles.actionButtonText}>✕</ThemedText>
         </TouchableOpacity>
-        <TouchableOpacity style={[styles.actionButton, styles.watchedButton]} onPress={handleSwipeWatched}>
+        <TouchableOpacity
+          style={[styles.actionButton, styles.watchedButton]}
+          onPress={() => (currentTitle ? handleSwipeWatched(currentTitle) : advanceDeck())}>
           <ThemedText style={styles.actionButtonText}>✓</ThemedText>
         </TouchableOpacity>
-        <TouchableOpacity style={[styles.actionButton, styles.likeButton]} onPress={handleSwipeRight}>
+        <TouchableOpacity
+          style={[styles.actionButton, styles.likeButton]}
+          onPress={() => (currentTitle ? handleSwipeRight(currentTitle) : advanceDeck())}>
           <ThemedText style={styles.actionButtonText}>♥</ThemedText>
         </TouchableOpacity>
       </View>
@@ -518,7 +599,7 @@ const styles = StyleSheet.create({
   refreshButton: {
     paddingHorizontal: 24,
     paddingVertical: 12,
-    backgroundColor: '#e01245',
+    backgroundColor: '#c41010',
     borderRadius: 8,
   },
   refreshButtonText: {
@@ -529,7 +610,7 @@ const styles = StyleSheet.create({
     marginTop: 24,
     paddingHorizontal: 24,
     paddingVertical: 12,
-    backgroundColor: '#e01245',
+    backgroundColor: '#c41010',
     borderRadius: 8,
   },
   setupButtonText: {
@@ -557,7 +638,7 @@ const styles = StyleSheet.create({
     elevation: 5,
   },
   passButton: {
-    backgroundColor: '#ff4444',
+    backgroundColor: '#c41010',
   },
   watchedButton: {
     backgroundColor: '#77d9e6',

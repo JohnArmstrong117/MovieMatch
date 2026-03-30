@@ -307,7 +307,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   saveButtonSmall: {
-    backgroundColor: '#e01245',
+    backgroundColor: '#c41010',
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 8,
@@ -380,8 +380,8 @@ const styles = StyleSheet.create({
     paddingLeft: 8,
   },
   chipActive: {
-    backgroundColor: '#e01245',
-    borderColor: '#e01245',
+    backgroundColor: '#c41010',
+    borderColor: '#c41010',
   },
   providerLogo: {
     width: 24,

@@ -45,8 +45,8 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 32,
-    fontWeight: 'bold',
     lineHeight: 32,
+    fontFamily: 'Limelight',
   },
   subtitle: {
     fontSize: 20,
@@ -55,6 +55,6 @@ const styles = StyleSheet.create({
   link: {
     lineHeight: 30,
     fontSize: 16,
-    color: '#e01245',
+    color: '#c41010',
   },
 });

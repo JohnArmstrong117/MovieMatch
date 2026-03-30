@@ -576,6 +576,26 @@ export default function MatchesScreen() {
               }
             : undefined
         }
+        onRemoveFromMatches={
+          selectedMatch?.id && user
+            ? async () => {
+                try {
+                  await matchHelpers.removeMatch(user.id, selectedMatch.tmdb_id, selectedMatch.type);
+                  await swipeHelpers.createSwipe({
+                    user_id: user.id,
+                    tmdb_id: selectedMatch.tmdb_id,
+                    type: selectedMatch.type,
+                    decision: 'pass',
+                  });
+                  await loadMatches();
+                  setDetailVisible(false);
+                  setSelectedMatch(null);
+                } catch (e) {
+                  console.error('Remove from matches:', e);
+                }
+              }
+            : undefined
+        }
       />
 
       {filteredAndSortedMatches.length === 0 ? (
@@ -692,7 +712,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 16,
     borderRadius: 12,
-    backgroundColor: '#e01245',
+    backgroundColor: '#c41010',
   },
   addButtonText: {
     fontSize: 16,
@@ -729,7 +749,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   filterButtonTextActive: {
-    color: '#e01245',
+    color: '#c41010',
   },
   filterButtonSummary: {
     fontSize: 12,
@@ -789,7 +809,7 @@ const styles = StyleSheet.create({
   modalDoneText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#e01245',
+    color: '#c41010',
   },
   modalScroll: {
     paddingHorizontal: 20,
@@ -855,7 +875,7 @@ const styles = StyleSheet.create({
   addResultAddLabel: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#e01245',
+    color: '#c41010',
     marginLeft: 8,
   },
   addResultPlaceholderText: {
@@ -881,7 +901,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.06)',
   },
   genreChipActive: {
-    backgroundColor: '#e01245',
+    backgroundColor: '#c41010',
   },
   genreChipText: {
     fontSize: 14,
@@ -902,7 +922,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.06)',
   },
   watchedChipActive: {
-    backgroundColor: '#e01245',
+    backgroundColor: '#c41010',
   },
   watchedChipText: {
     fontSize: 14,
@@ -923,7 +943,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.06)',
   },
   sortChipActive: {
-    backgroundColor: '#e01245',
+    backgroundColor: '#c41010',
   },
   sortChipText: {
     fontSize: 14,

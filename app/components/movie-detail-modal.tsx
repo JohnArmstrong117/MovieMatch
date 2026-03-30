@@ -8,13 +8,16 @@ import {
   ScrollView,
   Image,
   ActivityIndicator,
+  Pressable,
+  TextInput,
+  Alert,
 } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import { getSupabaseUrl, getSupabaseAnonKey } from '@/lib/supabase';
 import { useAuth } from '@/contexts/auth-context';
 import { useThemeColor } from '@/hooks/use-theme-color';
-import { streamingServiceHelpers } from '@/lib/db-helpers';
-import type { TMDBProvider } from '@/lib/db-helpers';
+import { streamingServiceHelpers, friendHelpers } from '@/lib/db-helpers';
+import type { TMDBProvider, FriendWithProfile } from '@/lib/db-helpers';
 import { ThemedText } from './themed-text';
 import { ThemedView } from './themed-view';
 
@@ -58,6 +61,8 @@ interface MovieDetailModalProps {
   /** When viewing a recommendation: sender display name and optional message */
   senderName?: string | null;
   senderMessage?: string | null;
+  /** If provided and item is in matches (matchId set), show "Remove from my matches" at bottom */
+  onRemoveFromMatches?: () => void | Promise<void>;
 }
 
 export function MovieDetailModal({
@@ -73,6 +78,7 @@ export function MovieDetailModal({
   isInMyMatches = false,
   senderName,
   senderMessage,
+  onRemoveFromMatches,
 }: MovieDetailModalProps) {
   const { user } = useAuth();
   const watchedButtonBorderColor = useThemeColor(
@@ -83,12 +89,25 @@ export function MovieDetailModal({
     { light: '#2acc2a', dark: 'rgba(255,255,255,0.9)' },
     'text'
   );
+  const recommendInputBg = useThemeColor({}, 'background');
+  const recommendInputText = useThemeColor({}, 'text');
+  const recommendInputBorder = useThemeColor(
+    { light: 'rgba(0,0,0,0.12)', dark: 'rgba(255,255,255,0.15)' },
+    'icon'
+  );
   const [providers, setProviders] = useState<WatchProviderInfo[]>([]);
   const [loadingProviders, setLoadingProviders] = useState(false);
   const [topCast, setTopCast] = useState<string[]>([]);
   const [loadingCast, setLoadingCast] = useState(false);
   /** User's selected providers (feed is filtered by these); shown when TMDB returns no per-title data */
   const [userProviders, setUserProviders] = useState<TMDBProvider[]>([]);
+  /** Recommend to friends: modal open, friends list, selected ids, message draft, sending */
+  const [recommendModalOpen, setRecommendModalOpen] = useState(false);
+  const [friendsList, setFriendsList] = useState<FriendWithProfile[]>([]);
+  const [friendsLoading, setFriendsLoading] = useState(false);
+  const [selectedFriendIds, setSelectedFriendIds] = useState<Set<string>>(new Set());
+  const [recommendMessage, setRecommendMessage] = useState('');
+  const [recommendSending, setRecommendSending] = useState(false);
 
   useEffect(() => {
     if (!visible || !item) {
@@ -134,6 +153,63 @@ export function MovieDetailModal({
       cancelled = true;
     };
   }, [visible, item?.tmdb_id, item?.type]);
+
+  useEffect(() => {
+    if (!recommendModalOpen || !user) {
+      if (!recommendModalOpen) {
+        setSelectedFriendIds(new Set());
+        setRecommendMessage('');
+      }
+      return;
+    }
+    let cancelled = false;
+    setFriendsLoading(true);
+    setFriendsList([]);
+    friendHelpers.getFriends(user.id).then((list: FriendWithProfile[]) => {
+      if (!cancelled) {
+        setFriendsList(list);
+        setFriendsLoading(false);
+      }
+    }).catch(() => {
+      if (!cancelled) setFriendsLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [recommendModalOpen, user]);
+
+  const toggleFriendSelected = (friendId: string) => {
+    setSelectedFriendIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(friendId)) next.delete(friendId);
+      else next.add(friendId);
+      return next;
+    });
+  };
+
+  const allSelected = friendsList.length > 0 && selectedFriendIds.size === friendsList.length;
+  const toggleSelectAll = () => {
+    if (allSelected) {
+      setSelectedFriendIds(new Set());
+    } else {
+      setSelectedFriendIds(new Set(friendsList.map((f) => f.id)));
+    }
+  };
+
+  const handleSendRecommendations = async () => {
+    if (!user || !item || selectedFriendIds.size === 0) return;
+    const trimmedMessage = recommendMessage.trim() || undefined;
+    setRecommendSending(true);
+    try {
+      for (const toUserId of selectedFriendIds) {
+        await friendHelpers.sendRecommendation(user.id, toUserId, item.tmdb_id, item.type, trimmedMessage ?? null);
+      }
+      setRecommendModalOpen(false);
+      Alert.alert('Sent', `Recommended to ${selectedFriendIds.size} friend${selectedFriendIds.size === 1 ? '' : 's'}`);
+    } catch (e: unknown) {
+      Alert.alert('Error', (e as Error)?.message ?? 'Failed to send recommendations');
+    } finally {
+      setRecommendSending(false);
+    }
+  };
 
   useEffect(() => {
     if (!visible || !item) {
@@ -315,6 +391,15 @@ export function MovieDetailModal({
                 </View>
               )}
 
+              {item && user && (
+                <TouchableOpacity
+                  style={styles.recommendButton}
+                  onPress={() => setRecommendModalOpen(true)}
+                  activeOpacity={0.8}>
+                  <ThemedText style={styles.recommendButtonText}>Recommend</ThemedText>
+                </TouchableOpacity>
+              )}
+
               {onAddToMatches && !isInMyMatches && (
                 <TouchableOpacity
                   style={styles.addToMatchesButton}
@@ -454,10 +539,116 @@ export function MovieDetailModal({
                   )}
                 </View>
               )}
+
+              {matchId != null && onRemoveFromMatches && (
+                <TouchableOpacity
+                  style={styles.removeFromMatchesButton}
+                  onPress={onRemoveFromMatches}
+                  activeOpacity={0.8}>
+                  <ThemedText style={styles.removeFromMatchesButtonText}>
+                    Remove from my matches
+                  </ThemedText>
+                </TouchableOpacity>
+              )}
             </ScrollView>
           </ThemedView>
         </View>
       </View>
+
+      <Modal
+        visible={recommendModalOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setRecommendModalOpen(false)}>
+        <Pressable style={styles.recommendBackdrop} onPress={() => setRecommendModalOpen(false)} />
+        <View style={styles.recommendModalContent}>
+          <ThemedView style={styles.recommendModalInner}>
+            <View style={styles.recommendModalHeader}>
+              <ThemedText type="title" style={styles.recommendModalTitle}>
+                Recommend to friends
+              </ThemedText>
+              <TouchableOpacity onPress={() => setRecommendModalOpen(false)}>
+                <ThemedText style={styles.modalDoneText}>Cancel</ThemedText>
+              </TouchableOpacity>
+            </View>
+            {item && (
+              <ScrollView
+                style={styles.recommendModalScroll}
+                contentContainerStyle={styles.recommendModalBody}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator>
+                <ThemedText style={styles.recommendItemTitle}>{item.title ?? 'Unknown Title'}</ThemedText>
+                <ThemedText style={styles.recommendModalLabel}>Select friends</ThemedText>
+                {friendsLoading ? (
+                  <ActivityIndicator size="small" style={styles.recommendFriendsLoader} />
+                ) : friendsList.length === 0 ? (
+                  <ThemedText style={styles.recommendEmptyText}>No friends yet. Add friends to recommend.</ThemedText>
+                ) : (
+                  <>
+                    <TouchableOpacity
+                      style={[styles.recommendSelectAllRow, allSelected && styles.recommendFriendRowSelected]}
+                      onPress={toggleSelectAll}
+                      activeOpacity={0.7}>
+                      <View style={[styles.recommendCheckbox, allSelected && styles.recommendCheckboxSelected]}>
+                        {allSelected && <ThemedText style={styles.recommendCheckmark}>✓</ThemedText>}
+                      </View>
+                      <ThemedText style={styles.recommendSelectAllText}>
+                        {allSelected ? 'Deselect all' : 'Select all'}
+                      </ThemedText>
+                    </TouchableOpacity>
+                  <View style={styles.recommendFriendList}>
+                    {friendsList.map((friend) => {
+                      const isSelected = selectedFriendIds.has(friend.id);
+                      return (
+                        <TouchableOpacity
+                          key={friend.id}
+                          style={[styles.recommendFriendRow, isSelected && styles.recommendFriendRowSelected]}
+                          onPress={() => toggleFriendSelected(friend.id)}
+                          activeOpacity={0.7}>
+                          <View style={[styles.recommendCheckbox, isSelected && styles.recommendCheckboxSelected]}>
+                            {isSelected && <ThemedText style={styles.recommendCheckmark}>✓</ThemedText>}
+                          </View>
+                          <ThemedText style={styles.recommendFriendName} numberOfLines={1}>
+                            {friend.display_name || 'Friend'}
+                          </ThemedText>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                  </>
+                )}
+                <ThemedText style={[styles.recommendModalLabel, styles.recommendMessageLabel]}>Add a short message (optional)</ThemedText>
+                <TextInput
+                  style={[
+                    styles.recommendMessageInput,
+                    { backgroundColor: recommendInputBg, borderColor: recommendInputBorder, color: recommendInputText },
+                  ]}
+                  placeholder="e.g. You'll love this one!"
+                  placeholderTextColor="#888"
+                  value={recommendMessage}
+                  onChangeText={setRecommendMessage}
+                  multiline
+                  maxLength={300}
+                  editable={!recommendSending}
+                />
+                <ThemedText style={styles.recommendMessageHint}>{recommendMessage.length}/300</ThemedText>
+                <TouchableOpacity
+                  style={[styles.recommendSendButton, (selectedFriendIds.size === 0 || recommendSending) && styles.recommendSendButtonDisabled]}
+                  onPress={handleSendRecommendations}
+                  disabled={selectedFriendIds.size === 0 || recommendSending}>
+                  {recommendSending ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <ThemedText style={styles.recommendSendButtonText}>
+                      Send to {selectedFriendIds.size} friend{selectedFriendIds.size === 1 ? '' : 's'}
+                    </ThemedText>
+                  )}
+                </TouchableOpacity>
+              </ScrollView>
+            )}
+          </ThemedView>
+        </View>
+      </Modal>
     </Modal>
   );
 }
@@ -605,6 +796,183 @@ const styles = StyleSheet.create({
   inMyMatchesChipText: {
     fontSize: 13,
     fontWeight: '600',
+  },
+  removeFromMatchesButton: {
+    marginTop: 24,
+    marginBottom: 16,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255, 68, 68, 0.15)',
+    borderWidth: 1,
+    borderColor: '#c41010',
+  },
+  removeFromMatchesButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#c41010',
+  },
+  recommendButton: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 12,
+    marginBottom: 16,
+    backgroundColor: '#c41010',
+  },
+  recommendButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#fff',
+  },
+  recommendBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  recommendModalContent: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    maxHeight: '85%',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    overflow: 'hidden',
+  },
+  recommendModalInner: {
+    flex: 1,
+    paddingBottom: 24,
+    minHeight: 280,
+  },
+  recommendModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(0,0,0,0.08)',
+  },
+  recommendModalTitle: {
+    fontSize: 20,
+    flex: 1,
+  },
+  modalDoneText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#c41010',
+  },
+  recommendModalScroll: {
+    flex: 1,
+  },
+  recommendModalBody: {
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 24,
+  },
+  recommendItemTitle: {
+    fontSize: 17,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  recommendModalLabel: {
+    fontSize: 14,
+    opacity: 0.85,
+    marginTop: 16,
+    marginBottom: 6,
+  },
+  recommendMessageLabel: {
+    marginTop: 20,
+  },
+  recommendFriendsLoader: {
+    marginVertical: 16,
+  },
+  recommendEmptyText: {
+    fontSize: 14,
+    opacity: 0.8,
+    marginVertical: 8,
+  },
+  recommendSelectAllRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 4,
+    marginBottom: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.1)',
+  },
+  recommendSelectAllText: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  recommendFriendList: {
+    marginBottom: 8,
+  },
+  recommendFriendRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(0,0,0,0.06)',
+  },
+  recommendFriendRowSelected: {
+    backgroundColor: 'rgba(68, 136, 255, 0.08)',
+  },
+  recommendCheckbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: 'rgba(0,0,0,0.3)',
+    marginRight: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  recommendCheckboxSelected: {
+    borderColor: '#4488ff',
+    backgroundColor: '#4488ff',
+  },
+  recommendCheckmark: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  recommendFriendName: {
+    flex: 1,
+    fontSize: 16,
+  },
+  recommendMessageInput: {
+    minHeight: 88,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    fontSize: 16,
+    textAlignVertical: 'top',
+  },
+  recommendMessageHint: {
+    fontSize: 12,
+    opacity: 0.6,
+    marginTop: 4,
+  },
+  recommendSendButton: {
+    marginTop: 20,
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: '#c41010',
+    alignItems: 'center',
+  },
+  recommendSendButtonDisabled: {
+    opacity: 0.6,
+  },
+  recommendSendButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#fff',
   },
   senderMessageBlock: {
     marginTop: 12,

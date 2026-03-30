@@ -277,7 +277,7 @@ export default function FriendsScreen() {
             From contacts
           </ThemedText>
           <ThemedText style={styles.sectionDescription}>
-            Find friends on FlickSwipe or invite contacts to join
+            Find friends on Meesh or invite contacts to join
           </ThemedText>
           <TouchableOpacity
             style={styles.contactsButton}
@@ -435,7 +435,7 @@ const styles = StyleSheet.create({
   contactsButton: {
     paddingVertical: 14,
     paddingHorizontal: 20,
-    backgroundColor: '#e01245',
+    backgroundColor: '#c41010',
     borderRadius: 12,
     alignItems: 'center',
   },
@@ -513,13 +513,13 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   smallButton: {
-    backgroundColor: '#e01245',
+    backgroundColor: '#c41010',
     paddingHorizontal: 14,
     paddingVertical: 6,
     borderRadius: 8,
   },
   smallButtonSuccess: {
-    backgroundColor: '#e01245',
+    backgroundColor: '#c41010',
   },
   smallButtonText: {
     color: '#fff',
@@ -590,7 +590,7 @@ const styles = StyleSheet.create({
   actionModalButtonText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#e01245',
+    color: '#c41010',
   },
   actionModalButtonDanger: {},
   actionModalButtonDangerText: {

@@ -198,7 +198,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   backButton: { paddingVertical: 8, paddingRight: 8 },
-  backButtonText: { fontSize: 16, fontWeight: '600', color: '#e01245' },
+  backButtonText: { fontSize: 16, fontWeight: '600', color: '#c41010' },
   headerTitle: { flex: 1, fontSize: 18, fontWeight: '600' },
   centered: { flex: 1, textAlign: 'center', marginTop: 24 },
   empty: {

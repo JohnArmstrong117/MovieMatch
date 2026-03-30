@@ -18,10 +18,10 @@ import { useAuth } from '@/contexts/auth-context';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useThemeColor } from '@/hooks/use-theme-color';
-import { profileHelpers } from '@/lib/db-helpers';
+import { profileHelpers, swipeHelpers } from '@/lib/db-helpers';
 
 const AVATAR_COLOR_PRESETS = [
-  '#e01245',
+  '#c41010',
   '#6B2D3C',
   '#0a7ea4',
   '#1a5f7a',
@@ -48,6 +48,7 @@ export default function ProfileScreen() {
   const [avatarColor, setAvatarColor] = useState(colors.tint);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [clearingPasses, setClearingPasses] = useState<'movie' | 'tv' | null>(null);
 
   const loadProfile = useCallback(async () => {
     if (!user) return;
@@ -117,6 +118,34 @@ export default function ProfileScreen() {
             } catch (error: unknown) {
               const message = error instanceof Error ? error.message : 'Failed to sign out';
               Alert.alert('Error', message);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const confirmClearPassed = (type: 'movie' | 'tv') => {
+    if (!user) return;
+    const label = type === 'movie' ? 'passed movies' : 'passed TV shows';
+    Alert.alert(
+      'Reset passed titles',
+      `This will remove all your ${label} so they can appear in your swipe deck again. Your likes and matches will be kept.\n\nContinue?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setClearingPasses(type);
+              await swipeHelpers.clearPassedSwipes(user.id, type);
+              Alert.alert('Done', `Your ${label} have been reset.`);
+            } catch (e: unknown) {
+              const message = e instanceof Error ? e.message : 'Failed to reset passed titles';
+              Alert.alert('Error', message);
+            } finally {
+              setClearingPasses(null);
             }
           },
         },
@@ -194,6 +223,37 @@ export default function ProfileScreen() {
               <IconSymbol name="chevron.right" size={20} color={colors.icon} />
             </TouchableOpacity>
           </Link>
+        </View>
+
+        <View style={styles.section}>
+          <ThemedText type="subtitle" style={styles.sectionTitle}>
+            Reset passed titles
+          </ThemedText>
+          <ThemedText style={styles.sectionHelper}>
+            Removing passed titles lets those movies or shows appear in your swipe deck again. Likes and matches are not affected.
+          </ThemedText>
+          <View style={styles.resetButtonsRow}>
+            <TouchableOpacity
+              style={styles.resetButton}
+              onPress={() => confirmClearPassed('movie')}
+              disabled={clearingPasses === 'movie'}>
+              {clearingPasses === 'movie' ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <ThemedText style={styles.resetButtonText}>Reset passed movies</ThemedText>
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.resetButton}
+              onPress={() => confirmClearPassed('tv')}
+              disabled={clearingPasses === 'tv'}>
+              {clearingPasses === 'tv' ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <ThemedText style={styles.resetButtonText}>Reset passed TV</ThemedText>
+              )}
+            </TouchableOpacity>
+          </View>
         </View>
 
         <TouchableOpacity
@@ -291,6 +351,11 @@ const styles = StyleSheet.create({
   section: {
     marginBottom: 24,
   },
+  sectionHelper: {
+    fontSize: 14,
+    opacity: 0.8,
+    marginBottom: 12,
+  },
   sectionTitle: {
     marginBottom: 12,
     paddingHorizontal: 4,
@@ -317,6 +382,22 @@ const styles = StyleSheet.create({
   signOutText: {
     color: '#fff',
     fontSize: 16,
+    fontWeight: '600',
+  },
+  resetButtonsRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  resetButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: '#c41010',
+    alignItems: 'center',
+  },
+  resetButtonText: {
+    color: '#fff',
+    fontSize: 14,
     fontWeight: '600',
   },
 });

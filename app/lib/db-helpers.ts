@@ -606,6 +606,25 @@ export const swipeHelpers = {
     return data;
   },
 
+  /**
+   * Remove all PASS swipes for a user (optionally filtered by type).
+   * This lets passed titles re-enter the potential swipe feed.
+   */
+  async clearPassedSwipes(userId: string, type?: 'movie' | 'tv'): Promise<void> {
+    let query = supabase
+      .from('swipes')
+      .delete()
+      .eq('user_id', userId)
+      .eq('decision', 'pass');
+
+    if (type) {
+      query = query.eq('type', type);
+    }
+
+    const { error } = await query;
+    if (error) throw error;
+  },
+
   async hasSwiped(userId: string, tmdbId: number, type: 'movie' | 'tv'): Promise<boolean> {
     const { data, error } = await supabase.rpc('has_user_swiped', {
       p_user_id: userId,

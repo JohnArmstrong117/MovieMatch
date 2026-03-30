@@ -363,7 +363,7 @@ const styles = StyleSheet.create({
     borderWidth: 4,
   },
   passOverlay: {
-    borderColor: '#ff4444',
+    borderColor: '#c41010',
     backgroundColor: 'rgba(255, 68, 68, 0.1)',
   },
   likeOverlay: {

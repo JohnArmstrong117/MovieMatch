@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFonts } from '@expo-google-fonts/limelight/useFonts';
 import { Limelight_400Regular } from '@expo-google-fonts/limelight/400Regular';
 import { AuthGate } from '@/components/auth-gate';
+import { FirstLoginTutorial } from '@/components/first-login-tutorial';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { useAuth } from '@/contexts/auth-context';
 import { NotificationCountsProvider } from '@/contexts/notification-counts-context';
@@ -67,6 +68,14 @@ export default function AuthenticatedLayout() {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
 
+  const [fontsLoaded] = useFonts({
+    Limelight_400Regular,
+  });
+
+  if (!fontsLoaded) {
+    return null;
+  }
+
   return (
     <AuthGate>
       <NotificationCountsProvider userId={user?.id}>
@@ -74,7 +83,7 @@ export default function AuthenticatedLayout() {
           <View style={[styles.banner, { paddingTop: insets.top + 4, paddingBottom: 6 }]}>
             <View style={styles.bannerSpacer} />
             <View style={styles.bannerTitleWrap}>
-              <Text style={styles.bannerText}>FlickSwipe</Text>
+              <Text style={[styles.bannerText, styles.bannerTextFlick]}>Meesh</Text>
             </View>
             <InboxButton />
           </View>
@@ -89,6 +98,7 @@ export default function AuthenticatedLayout() {
               <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
             </Stack>
           </View>
+          <FirstLoginTutorial enabled={!!user} />
         </View>
       </NotificationCountsProvider>
     </AuthGate>
@@ -103,9 +113,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#e01245',
-    paddingHorizontal: 12,
-    minHeight: 36,
+    backgroundColor: '#c41010',
+    paddingHorizontal: 16,
+    minHeight: 44,
   },
   bannerSpacer: {
     width: 36,
@@ -119,15 +129,15 @@ const styles = StyleSheet.create({
     bottom: 0,
     justifyContent: 'flex-end',
     alignItems: 'center',
-    paddingBottom: 14,
+    paddingBottom: 10,
+    paddingHorizontal: 48,
   },
   bannerTitleRow: {
     flexDirection: 'row',
     alignItems: 'baseline',
   },
   bannerText: {
-    fontSize: 20,
-    fontWeight: '700',
+    fontSize: 26,
     color: '#fff',
     letterSpacing: 0.5,
   },
