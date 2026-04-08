@@ -25,6 +25,7 @@ const MAPPING = {
   'gear': 'settings',
   'lock.fill': 'lock',
   'envelope.fill': 'mail',
+  'trash.fill': 'delete',
 } as IconMapping;
 
 /**

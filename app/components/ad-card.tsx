@@ -66,20 +66,20 @@ export function AdCard({ nativeAd, index, total, onSwipeLeft, onSwipeRight, onSw
       const isSwipeUp = onSwipeUp && ty < -SWIPE_UP_THRESHOLD && Math.abs(ty) >= Math.abs(tx);
 
       if (isSwipeUp) {
+        runOnJS(triggerHaptic)();
+        runOnJS(onSwipeUp!)();
         translateY.value = withSpring(-SCREEN_HEIGHT);
         translateX.value = withSpring(0);
         scale.value = withSpring(0.9);
-        runOnJS(triggerHaptic)();
-        opacity.value = withSpring(0, {}, () => runOnJS(onSwipeUp!)());
+        opacity.value = withSpring(0);
       } else if (Math.abs(tx) > SWIPE_THRESHOLD) {
         const direction = tx > 0 ? 'right' : 'left';
+        runOnJS(triggerHaptic)();
+        if (direction === 'right') runOnJS(onSwipeRight)();
+        else runOnJS(onSwipeLeft)();
         translateX.value = withSpring(direction === 'right' ? SCREEN_WIDTH : -SCREEN_WIDTH);
         translateY.value = withSpring(0);
-        runOnJS(triggerHaptic)();
-        opacity.value = withSpring(0, {}, () => {
-          if (direction === 'right') runOnJS(onSwipeRight)();
-          else runOnJS(onSwipeLeft)();
-        });
+        opacity.value = withSpring(0);
       } else {
         translateX.value = withSpring(0);
         translateY.value = withSpring(0);
@@ -111,17 +111,37 @@ export function AdCard({ nativeAd, index, total, onSwipeLeft, onSwipeRight, onSw
       <Animated.View style={[styles.card, animatedCardStyle]}>
         <ThemedView style={styles.cardContent}>
           <NativeAdView nativeAd={nativeAd} style={styles.nativeAdWrap}>
+            {(nativeAd.advertiser ?? nativeAd.store) ? (
+              <View style={styles.advertiserRow}>
+                {nativeAd.advertiser ? (
+                  <NativeAsset assetType={NativeAssetType.ADVERTISER}>
+                    <ThemedText style={styles.advertiserText} numberOfLines={1}>
+                      {nativeAd.advertiser}
+                    </ThemedText>
+                  </NativeAsset>
+                ) : null}
+                {nativeAd.advertiser && nativeAd.store ? (
+                  <ThemedText style={styles.advertiserSeparator}> · </ThemedText>
+                ) : null}
+                {nativeAd.store ? (
+                  <NativeAsset assetType={NativeAssetType.STORE}>
+                    <ThemedText style={styles.advertiserText} numberOfLines={1}>
+                      {nativeAd.store}
+                    </ThemedText>
+                  </NativeAsset>
+                ) : null}
+              </View>
+            ) : null}
+
             <NativeAsset assetType={NativeAssetType.HEADLINE}>
               <ThemedText type="title" style={styles.title}>
                 {nativeAd.headline || 'Sponsored'}
               </ThemedText>
             </NativeAsset>
 
-            <NativeAsset assetType={NativeAssetType.MEDIA}>
-              <View style={styles.mediaWrap}>
-                <NativeMediaView style={styles.media} />
-              </View>
-            </NativeAsset>
+            <View style={styles.mediaWrap}>
+              <NativeMediaView style={styles.media} />
+            </View>
 
             <NativeAsset assetType={NativeAssetType.BODY}>
               <ThemedText style={styles.body} numberOfLines={3}>
@@ -166,6 +186,22 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 16,
     justifyContent: 'flex-start',
+  },
+  advertiserRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  advertiserText: {
+    fontSize: 13,
+    fontWeight: '600',
+    opacity: 0.65,
+    flexShrink: 1,
+  },
+  advertiserSeparator: {
+    fontSize: 13,
+    opacity: 0.5,
   },
   title: {
     marginBottom: 10,

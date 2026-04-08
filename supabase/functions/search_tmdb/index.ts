@@ -3,10 +3,12 @@
 // Requires: TMDB_API_KEY secret and user authentication.
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+import { getUserIdFromAuthHeader } from '../_shared/verify_user_jwt.ts';
 
 const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 const TMDB_API_KEY = Deno.env.get('TMDB_API_KEY');
+const TMDB_READ_ACCESS_TOKEN = Deno.env.get('TMDB_READ_ACCESS_TOKEN');
 
 interface TMDBMultiResult {
   id: number;
@@ -53,7 +55,8 @@ serve(async (req) => {
   }
 
   try {
-    const authHeader = req.headers.get('authorization');
+    const authHeader =
+      req.headers.get('Authorization') ?? req.headers.get('authorization');
     if (!authHeader) {
       return new Response(
         JSON.stringify({ error: 'Unauthorized: Missing authorization header' }),
@@ -62,22 +65,19 @@ serve(async (req) => {
     }
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
-    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY') ?? '';
-    const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-      global: { headers: { Authorization: authHeader } },
-    });
-
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user) {
+    if (!(await getUserIdFromAuthHeader(authHeader, supabaseUrl))) {
       return new Response(
-        JSON.stringify({ error: 'Unauthorized: Invalid token' }),
+        JSON.stringify({ error: 'Unauthorized: Invalid or expired token' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    if (!TMDB_API_KEY) {
+    if (!TMDB_API_KEY && !TMDB_READ_ACCESS_TOKEN) {
       return new Response(
-        JSON.stringify({ error: 'TMDB_API_KEY not configured' }),
+        JSON.stringify({
+          error: 'TMDB API credentials not configured',
+          hint: 'Set TMDB_API_KEY (v3) or TMDB_READ_ACCESS_TOKEN (v4) in Supabase Edge Function secrets.',
+        }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -94,18 +94,19 @@ serve(async (req) => {
     }
 
     const params = new URLSearchParams({
-      api_key: TMDB_API_KEY,
       query,
       page: String(page),
       include_adult: 'false',
     });
+    if (TMDB_API_KEY) {
+      params.set('api_key', TMDB_API_KEY);
+    }
     const url = `${TMDB_BASE_URL}/search/multi?${params.toString()}`;
-    const response = await fetch(url, {
-      headers: {
-        'Authorization': `Bearer ${TMDB_API_KEY}`,
-        'Accept': 'application/json',
-      },
-    });
+    const headers: Record<string, string> = { Accept: 'application/json' };
+    if (TMDB_READ_ACCESS_TOKEN) {
+      headers.Authorization = `Bearer ${TMDB_READ_ACCESS_TOKEN}`;
+    }
+    const response = await fetch(url, { headers });
 
     if (!response.ok) {
       const text = await response.text();

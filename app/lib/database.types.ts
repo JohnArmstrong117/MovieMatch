@@ -302,6 +302,23 @@ export interface Database {
           message?: string | null
         }
       }
+      user_unified_genres: {
+        Row: {
+          user_id: string
+          slug: string
+          created_at: string
+        }
+        Insert: {
+          user_id: string
+          slug: string
+          created_at?: string
+        }
+        Update: {
+          user_id?: string
+          slug?: string
+          created_at?: string
+        }
+      }
     }
     Views: {
       matches_with_titles: {

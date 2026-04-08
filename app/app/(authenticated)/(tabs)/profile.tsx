@@ -18,7 +18,7 @@ import { useAuth } from '@/contexts/auth-context';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useThemeColor } from '@/hooks/use-theme-color';
-import { profileHelpers, swipeHelpers } from '@/lib/db-helpers';
+import { accountHelpers, profileHelpers, swipeHelpers } from '@/lib/db-helpers';
 
 const AVATAR_COLOR_PRESETS = [
   '#c41010',
@@ -33,7 +33,7 @@ const AVATAR_COLOR_PRESETS = [
 ];
 
 export default function ProfileScreen() {
-  const { user, signOut } = useAuth();
+  const { user, session, signOut } = useAuth();
   const router = useRouter();
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? 'light'];
@@ -49,6 +49,7 @@ export default function ProfileScreen() {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [clearingPasses, setClearingPasses] = useState<'movie' | 'tv' | null>(null);
+  const [deletingAccount, setDeletingAccount] = useState(false);
 
   const loadProfile = useCallback(async () => {
     if (!user) return;
@@ -100,6 +101,35 @@ export default function ProfileScreen() {
       // Column may not exist until migration 20240113000000_profiles_avatar_color is applied
       if (__DEV__) console.warn('Could not save icon color (migration applied?)', e);
     }
+  };
+
+  const confirmDeleteAccount = () => {
+    if (!user || !session || deletingAccount) return;
+    Alert.alert(
+      'Delete account?',
+      'This permanently deletes your account and all data on our servers: profile, preferences, swipes, matches, friends, and recommendations. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete account',
+          style: 'destructive',
+          onPress: async () => {
+            setDeletingAccount(true);
+            try {
+              await accountHelpers.deleteMyAccount();
+              await signOut();
+              router.replace('/(auth)/login');
+            } catch (e: unknown) {
+              const message =
+                e instanceof Error ? e.message : 'Could not delete your account. Try again later.';
+              Alert.alert('Error', message);
+            } finally {
+              setDeletingAccount(false);
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleSignOut = async () => {
@@ -223,6 +253,18 @@ export default function ProfileScreen() {
               <IconSymbol name="chevron.right" size={20} color={colors.icon} />
             </TouchableOpacity>
           </Link>
+
+          <TouchableOpacity
+            style={[styles.menuRow, styles.deleteAccountRow]}
+            onPress={confirmDeleteAccount}
+            disabled={deletingAccount || !session}>
+            {deletingAccount ? (
+              <ActivityIndicator size="small" color="#c41010" />
+            ) : (
+              <IconSymbol name="trash.fill" size={22} color="#c41010" />
+            )}
+            <ThemedText style={styles.deleteAccountLabel}>Delete account</ThemedText>
+          </TouchableOpacity>
         </View>
 
         <View style={styles.section}>
@@ -372,6 +414,16 @@ const styles = StyleSheet.create({
   menuLabel: {
     flex: 1,
     fontSize: 16,
+  },
+  deleteAccountRow: {
+    marginTop: 12,
+    backgroundColor: 'rgba(196, 16, 16, 0.08)',
+  },
+  deleteAccountLabel: {
+    flex: 1,
+    fontSize: 16,
+    color: '#c41010',
+    fontWeight: '600',
   },
   signOutButton: {
     paddingVertical: 14,

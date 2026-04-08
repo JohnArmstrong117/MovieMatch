@@ -198,8 +198,9 @@ web3 = 30
 enable_signup = true
 # If enabled, a user will be required to confirm any email change on both the old, and new email
 # addresses. If disabled, only the new email is required to confirm.
-double_confirm_changes = true
+double_confirm_changes = false
 # If enabled, users need to confirm their email address before signing in.
+# For hosted projects: turn off "Confirm email" in Dashboard → Authentication → Providers → Email.
 enable_confirmations = false
 # If enabled, users will need to reauthenticate or have logged in recently to change their password.
 secure_password_change = false
@@ -364,6 +365,20 @@ deno_version = 2
 
 # Allow get_watch_providers to be called without JWT (platform was returning 401 before our code ran)
 [functions.get_watch_providers]
+verify_jwt = false
+
+# Syncing providers is read-only from TMDB + upsert; allow invocation without a user JWT.
+[functions.sync_providers]
+verify_jwt = false
+
+# JWT verified inside the function (JWKS) so Authorization reaches the worker; gateway verify strips/forwards inconsistently on mobile.
+[functions.feed_movies]
+verify_jwt = false
+
+[functions.search_tmdb]
+verify_jwt = false
+
+[functions.delete_account]
 verify_jwt = false
 
 [analytics]

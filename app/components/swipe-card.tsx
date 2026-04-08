@@ -48,27 +48,19 @@ export function SwipeCard({ title, onSwipeLeft, onSwipeRight, onSwipeUp, onDoubl
   };
 
   const triggerSwipeRight = () => {
-    requestAnimationFrame(() => {
-      onSwipeRight();
-    });
+    onSwipeRight();
   };
 
   const triggerSwipeLeft = () => {
-    requestAnimationFrame(() => {
-      onSwipeLeft();
-    });
+    onSwipeLeft();
   };
 
   const triggerSwipeUp = () => {
-    if (onSwipeUp) {
-      requestAnimationFrame(() => onSwipeUp());
-    }
+    if (onSwipeUp) onSwipeUp();
   };
 
   const triggerDoubleTap = () => {
-    if (onDoubleTap) {
-      requestAnimationFrame(() => onDoubleTap());
-    }
+    if (onDoubleTap) onDoubleTap();
   };
 
   const tapGesture = Gesture.Tap()
@@ -106,25 +98,23 @@ export function SwipeCard({ title, onSwipeLeft, onSwipeRight, onSwipeUp, onDoubl
         Math.abs(translationY) >= Math.abs(translationX);
 
       if (isSwipeUp) {
+        runOnJS(triggerHaptic)();
+        runOnJS(triggerSwipeUp)();
         translateY.value = withSpring(-SCREEN_HEIGHT);
         translateX.value = withSpring(0);
         scale.value = withSpring(0.9);
-        runOnJS(triggerHaptic)();
-        opacity.value = withSpring(0, {}, () => {
-          runOnJS(triggerSwipeUp)();
-        });
+        opacity.value = withSpring(0);
       } else if (Math.abs(translationX) > SWIPE_THRESHOLD) {
         const direction = translationX > 0 ? 'right' : 'left';
+        runOnJS(triggerHaptic)();
+        if (direction === 'right') {
+          runOnJS(triggerSwipeRight)();
+        } else {
+          runOnJS(triggerSwipeLeft)();
+        }
         translateX.value = withSpring(direction === 'right' ? SCREEN_WIDTH : -SCREEN_WIDTH);
         translateY.value = withSpring(0);
-        runOnJS(triggerHaptic)();
-        opacity.value = withSpring(0, {}, () => {
-          if (direction === 'right') {
-            runOnJS(triggerSwipeRight)();
-          } else {
-            runOnJS(triggerSwipeLeft)();
-          }
-        });
+        opacity.value = withSpring(0);
       } else {
         translateX.value = withSpring(0);
         translateY.value = withSpring(0);
@@ -310,16 +300,16 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
-    height: '50%',
+    height: '62%',
     overflow: 'hidden',
   },
   gradientTop: {
-    flex: 1,
+    flex: 0.4,
     backgroundColor: 'transparent',
   },
   gradientBottom: {
-    flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.7)',
+    flex: 0.6,
+    backgroundColor: 'rgba(0,0,0,0.78)',
   },
   contentOverlay: {
     position: 'absolute',

@@ -8,44 +8,41 @@ import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
 /**
- * Get the local network IP address for Expo Go
- * Expo Go on physical devices needs the actual IP, not localhost
+ * Resolve Supabase URL from config.
+ * In production builds, this must be explicitly provided.
  */
-function getLocalNetworkUrl(): string {
-  // Check if we have a custom URL set
-  const customUrl = 
+function getSupabaseUrlFromConfig(): string {
+  const customUrl =
     Constants.expoConfig?.extra?.supabaseUrl || 
     process.env.EXPO_PUBLIC_SUPABASE_URL;
-  
+
   if (customUrl) {
     return customUrl;
   }
 
-  // For Expo Go on physical devices, we need the local network IP
-  // Try to extract it from the Expo dev server URL
+  if (!__DEV__) {
+    throw new Error(
+      'Missing EXPO_PUBLIC_SUPABASE_URL (or expo.extra.supabaseUrl). Production builds must use hosted Supabase.'
+    );
+  }
+
+  // Dev-only local fallback: infer LAN host for Expo Go.
   const hostUri = Constants.expoConfig?.hostUri;
   if (hostUri) {
-    // hostUri format: "192.168.1.100:8081" or "localhost:8081"
     const host = hostUri.split(':')[0];
     if (host && host !== 'localhost' && host !== '127.0.0.1') {
       return `http://${host}:54321`;
     }
   }
 
-  // Fallback: use localhost for web/simulator, or you can set your IP manually
-  // For physical devices, you'll need to set EXPO_PUBLIC_SUPABASE_URL with your local IP
-  // Example: EXPO_PUBLIC_SUPABASE_URL=http://192.168.1.100:54321
   if (Platform.OS === 'web') {
     return 'http://127.0.0.1:54321';
   }
 
-  // Default fallback
   return 'http://127.0.0.1:54321';
 }
 
-// Get Supabase URL and Anon Key from environment variables
-// For local development, use the local Supabase instance
-const supabaseUrl = getLocalNetworkUrl();
+const supabaseUrl = getSupabaseUrlFromConfig();
 
 // Debug: Log the Supabase URL being used (remove in production)
 if (__DEV__) {
@@ -56,8 +53,13 @@ if (__DEV__) {
 
 const supabaseAnonKey = 
   Constants.expoConfig?.extra?.supabaseAnonKey || 
-  process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || 
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0';
+  process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
+
+if (!supabaseAnonKey) {
+  throw new Error(
+    'Missing EXPO_PUBLIC_SUPABASE_ANON_KEY (or expo.extra.supabaseAnonKey).'
+  );
+}
 
 // Singleton pattern: only create one client instance
 let supabaseClient: SupabaseClient | null = null;
@@ -98,7 +100,7 @@ export const supabase = getSupabaseClient();
 
 /** Supabase project URL (for direct fetch to Edge Functions, etc.) */
 export function getSupabaseUrl(): string {
-  return getLocalNetworkUrl();
+  return getSupabaseUrlFromConfig();
 }
 
 /** Supabase anon key (use for Edge Function calls when session JWT causes 401) */

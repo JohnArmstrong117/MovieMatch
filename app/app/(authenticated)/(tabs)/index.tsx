@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { StyleSheet, View, TouchableOpacity, Alert } from 'react-native';
+import { Alert, Platform, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useAuth } from '@/contexts/auth-context';
 import { swipeHelpers } from '@/lib/db-helpers';
@@ -9,7 +9,8 @@ import { AdCard } from '@/components/ad-card';
 import { MovieDetailModal } from '@/components/movie-detail-modal';
 import { ThemedView } from '@/components/themed-view';
 import { ThemedText } from '@/components/themed-text';
-import { genreHelpers, streamingServiceHelpers, titleHelpers, feedHelpers, matchHelpers } from '@/lib/db-helpers';
+import { genreHelpers, streamingServiceHelpers, titleHelpers, feedHelpers, matchHelpers, unifiedGenreHelpers } from '@/lib/db-helpers';
+import { mergeTvGenreLabelsIntoMap } from '@/lib/unified-genres';
 import { MediaTypeToggle } from '@/components/media-type-toggle';
 import { NativeAd, TestIds } from 'react-native-google-mobile-ads';
 
@@ -18,11 +19,36 @@ type SwipeDeckItem =
   | { kind: 'ad'; id: string };
 
 const AD_INSERTION_INTERVAL = 16;
-// Safety-first: stay on AdMob test ads unless explicitly enabled.
+/**
+ * When this many title cards (not ad slots) remain from the current index onward,
+ * start loading the next feed page. Title-based so ads don’t delay prefetch.
+ */
+const PREFETCH_REMAINING_TITLES = 14;
+/** Max extra TMDB batches to pull in one prefetch if everything is already in the deck. */
+const LOAD_MORE_MAX_HOPS = 15;
+
+function countTitleCardsAhead(deck: SwipeDeckItem[], fromIndex: number): number {
+  let n = 0;
+  const start = Math.max(0, fromIndex);
+  for (let i = start; i < deck.length; i++) {
+    if (deck[i].kind === 'title') n++;
+  }
+  return n;
+}
+/** Set in `eas.json` for production; local/dev builds omit it and use test ads. */
 const USE_REAL_ADS = process.env.EXPO_PUBLIC_ADMOB_USE_REAL_ADS === 'true';
-const NATIVE_AD_UNIT_ID = USE_REAL_ADS
-  ? process.env.EXPO_PUBLIC_ADMOB_NATIVE_AD_UNIT_ID || TestIds.NATIVE
-  : TestIds.NATIVE;
+
+function nativeAdUnitIdForBuild(): string {
+  if (!USE_REAL_ADS) return TestIds.NATIVE;
+  const universal = process.env.EXPO_PUBLIC_ADMOB_NATIVE_AD_UNIT_ID;
+  const forPlatform =
+    Platform.OS === 'ios'
+      ? process.env.EXPO_PUBLIC_ADMOB_NATIVE_AD_UNIT_ID_IOS ?? universal
+      : process.env.EXPO_PUBLIC_ADMOB_NATIVE_AD_UNIT_ID_ANDROID ?? universal;
+  return forPlatform || TestIds.NATIVE;
+}
+
+const NATIVE_AD_UNIT_ID = nativeAdUnitIdForBuild();
 
 export default function SwipeScreen() {
   const { user } = useAuth();
@@ -35,6 +61,14 @@ export default function SwipeScreen() {
   const [loading, setLoading] = useState(true);
   const [hasPreferences, setHasPreferences] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
+  const currentPageRef = useRef(1);
+  const currentIndexRef = useRef(0);
+  const swipeDeckLengthRef = useRef(0);
+  const titlesRef = useRef<MockTitle[]>([]);
+  const loadingMoreRef = useRef(false);
+  const loadMoreTitlesRef = useRef<() => void>(() => {});
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [feedExhausted, setFeedExhausted] = useState(false);
   const [detailVisible, setDetailVisible] = useState(false);
   const [selectedTitle, setSelectedTitle] = useState<MockTitle | null>(null);
   const [genreById, setGenreById] = useState<Map<number, string> | null>(null);
@@ -57,6 +91,7 @@ export default function SwipeScreen() {
       if (cancelled) return;
       const map = new Map<number, string>();
       list.forEach((g: { genre_id: number; name: string }) => map.set(g.genre_id, g.name));
+      mergeTvGenreLabelsIntoMap(map);
       setGenreById(map);
     });
     return () => {
@@ -79,16 +114,28 @@ export default function SwipeScreen() {
     }, [hasPreferences, user, mediaType, titles.length])
   );
 
+  useEffect(() => {
+    titlesRef.current = titles;
+  }, [titles]);
+
+  useEffect(() => {
+    currentPageRef.current = currentPage;
+  }, [currentPage]);
+
+  useEffect(() => {
+    currentIndexRef.current = currentIndex;
+  }, [currentIndex]);
+
   const checkPreferences = async () => {
     if (!user) return;
 
     try {
-      const [services, genres] = await Promise.all([
+      const [services, genreSlugs] = await Promise.all([
         streamingServiceHelpers.getUserServices(user.id),
-        genreHelpers.getUserGenres(user.id),
+        unifiedGenreHelpers.getUserSlugsOrLegacy(user.id),
       ]);
 
-      if (services.length === 0 || genres.length === 0) {
+      if (services.length === 0 || genreSlugs.length === 0) {
         setHasPreferences(false);
         return;
       }
@@ -118,11 +165,14 @@ export default function SwipeScreen() {
 
     const type = mediaTypeRef.current;
     setLoading(true);
+    setFeedExhausted(false);
     try {
-      const [services, genres] = await Promise.all([
-        streamingServiceHelpers.getUserServices(user.id),
-        genreHelpers.getUserGenres(user.id),
-      ]);
+      const services = await streamingServiceHelpers.getUserServices(user.id);
+      if (services.length === 0) {
+        setTitles([]);
+        setLoading(false);
+        return;
+      }
 
       // Fetch from TMDB via Edge Function (movies or TV) – use ref so Refresh/focus always use current toggle
       console.log(`📡 Fetching ${type}s from feed_movies...`);
@@ -153,8 +203,10 @@ export default function SwipeScreen() {
       );
 
       setTitles(uniqueTitles);
+      titlesRef.current = uniqueTitles;
       setCurrentIndex(0);
       setCurrentPage(1);
+      currentPageRef.current = 1;
     } catch (error: any) {
       console.error('Error loading titles:', error);
       console.error('Error details:', error?.details);
@@ -166,6 +218,8 @@ export default function SwipeScreen() {
       if (errorMessage.includes('No providers selected') || errorMessage.includes('No genres selected')) {
         setHasPreferences(false);
         Alert.alert('Setup Required', errorMessage);
+      } else if (errorMessage.includes('No genres apply to')) {
+        Alert.alert('Genres for this medium', errorMessage);
       } else if (errorMessage.includes('TMDB_API_KEY not configured')) {
         Alert.alert(
           'Configuration Error',
@@ -195,15 +249,175 @@ export default function SwipeScreen() {
     return deck;
   }, [titles, mediaType]);
 
-  const advanceDeck = useCallback(() => {
-    setCurrentIndex((prev) => {
-      const next = prev + 1;
-      if (next >= swipeDeck.length - 2 && next < swipeDeck.length) {
-        loadMoreTitles();
-      }
-      return next;
-    });
+  useEffect(() => {
+    swipeDeckLengthRef.current = swipeDeck.length;
   }, [swipeDeck.length]);
+
+  const titlesRemainingAhead = useMemo(
+    () => countTitleCardsAhead(swipeDeck, currentIndex),
+    [swipeDeck, currentIndex]
+  );
+
+  const loadMoreTitles = useCallback(async () => {
+    if (!user || loadingMoreRef.current) return;
+    if (titlesRef.current.length === 0) return;
+
+    const type = mediaTypeRef.current;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+    try {
+      let pageToFetch = currentPageRef.current + 1;
+      let appended = false;
+
+      for (let hop = 0; hop < LOAD_MORE_MAX_HOPS; hop++) {
+        const feedResponse = await feedHelpers.getFeed({ type, limit: 20, page: pageToFetch });
+
+        currentPageRef.current = pageToFetch;
+        setCurrentPage(pageToFetch);
+
+        if (feedResponse.items.length === 0) {
+          if (feedResponse.nextPage == null) {
+            break;
+          }
+          pageToFetch = feedResponse.nextPage;
+          continue;
+        }
+
+        const newTitles: MockTitle[] = feedResponse.items.map((item) => ({
+          id: item.tmdb_id,
+          title: item.title,
+          original_title: item.title,
+          overview: item.overview,
+          poster_path: item.poster_path,
+          backdrop_path: null,
+          release_date: item.release_date || undefined,
+          first_air_date: item.first_air_date || undefined,
+          vote_average: item.vote_average || 0,
+          vote_count: item.vote_count || 0,
+          popularity: item.popularity || 0,
+          type,
+          genre_ids: item.genre_ids ?? [],
+        }));
+
+        const existingIds = new Set(
+          titlesRef.current.map((t) => `${t.type}-${t.id}`)
+        );
+        const uniqueNewTitles = newTitles.filter(
+          (title) => !existingIds.has(`${title.type}-${title.id}`)
+        );
+
+        if (uniqueNewTitles.length > 0) {
+          const merged = [...titlesRef.current, ...uniqueNewTitles];
+          titlesRef.current = merged;
+          setTitles(merged);
+          setFeedExhausted(false);
+          appended = true;
+          break;
+        }
+
+        if (feedResponse.nextPage == null) {
+          break;
+        }
+        pageToFetch = feedResponse.nextPage;
+      }
+
+      if (!appended) {
+        const pastEndOfDeck =
+          titlesRef.current.length > 0 &&
+          currentIndexRef.current >= swipeDeckLengthRef.current;
+        if (pastEndOfDeck) {
+          try {
+            const fallback = await feedHelpers.getFeed({ type, limit: 20, page: 1 });
+            const mapped: MockTitle[] = fallback.items.map((item) => ({
+              id: item.tmdb_id,
+              title: item.title,
+              original_title: item.title,
+              overview: item.overview,
+              poster_path: item.poster_path,
+              backdrop_path: null,
+              release_date: item.release_date || undefined,
+              first_air_date: item.first_air_date || undefined,
+              vote_average: item.vote_average || 0,
+              vote_count: item.vote_count || 0,
+              popularity: item.popularity || 0,
+              type,
+              genre_ids: item.genre_ids ?? [],
+            }));
+            const existingIds = new Set(
+              titlesRef.current.map((t) => `${t.type}-${t.id}`)
+            );
+            const uniqueFallback = mapped.filter(
+              (t) => !existingIds.has(`${t.type}-${t.id}`)
+            );
+            if (uniqueFallback.length > 0) {
+              const merged = [...titlesRef.current, ...uniqueFallback];
+              titlesRef.current = merged;
+              setTitles(merged);
+              setFeedExhausted(false);
+              currentPageRef.current = 1;
+              setCurrentPage(1);
+            } else {
+              setFeedExhausted(true);
+            }
+          } catch {
+            setFeedExhausted(true);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error loading more titles:', error);
+      const pastEndOfDeck =
+        titlesRef.current.length > 0 &&
+        currentIndexRef.current >= swipeDeckLengthRef.current;
+      if (pastEndOfDeck) {
+        setFeedExhausted(true);
+      }
+    } finally {
+      loadingMoreRef.current = false;
+      setLoadingMore(false);
+    }
+  }, [user]);
+
+  loadMoreTitlesRef.current = () => {
+    void loadMoreTitles();
+  };
+
+  const advanceDeck = useCallback(() => {
+    setCurrentIndex((prev) => prev + 1);
+  }, []);
+
+  /** Prefetch next feed page from title count (runs after each index / deck change). */
+  useEffect(() => {
+    if (loading || !user || !hasPreferences) return;
+    if (titles.length === 0) return;
+    if (feedExhausted) return;
+    if (currentIndex >= swipeDeck.length) return;
+    if (titlesRemainingAhead > PREFETCH_REMAINING_TITLES) return;
+    loadMoreTitlesRef.current();
+  }, [
+    titlesRemainingAhead,
+    currentIndex,
+    swipeDeck.length,
+    loading,
+    titles.length,
+    user,
+    hasPreferences,
+    feedExhausted,
+  ]);
+
+  useEffect(() => {
+    if (loading || !user || !hasPreferences) return;
+    if (currentIndex < swipeDeck.length || titles.length === 0) return;
+    if (feedExhausted || loadingMoreRef.current) return;
+    loadMoreTitlesRef.current();
+  }, [currentIndex, swipeDeck.length, titles.length, loading, user, hasPreferences, feedExhausted]);
+
+  /** Undo optimistic advance only if the user has not swiped again (index still at before+1). */
+  const rollbackDeckAfterFailedSave = useCallback((indexBeforeSwipe: number) => {
+    setCurrentIndex((current) =>
+      current === indexBeforeSwipe + 1 ? indexBeforeSwipe : current
+    );
+  }, []);
 
   useEffect(() => {
     const upcomingAdIds = swipeDeck
@@ -243,10 +457,13 @@ export default function SwipeScreen() {
     };
   }, [nativeAdsById]);
 
-  const handleSwipeRight = async (title: MockTitle) => {
+  const handleSwipeRight = (title: MockTitle) => {
     if (!user) return;
-    try {
-      await titleHelpers.upsertTitle({
+    const indexBeforeSwipe = currentIndex;
+    advanceDeck();
+    void (async () => {
+      try {
+        await titleHelpers.upsertTitle({
         tmdb_id: title.id,
         type: title.type,
         title: title.title,
@@ -283,18 +500,21 @@ export default function SwipeScreen() {
           console.error('❌ Error creating match:', error);
         }
       }
-
-      advanceDeck();
     } catch (error) {
       console.error('Error saving swipe:', error);
+      rollbackDeckAfterFailedSave(indexBeforeSwipe);
       Alert.alert('Error', 'Failed to save swipe');
     }
+    })();
   };
 
-  const handleSwipeWatched = async (title: MockTitle) => {
+  const handleSwipeWatched = (title: MockTitle) => {
     if (!user) return;
-    try {
-      await titleHelpers.upsertTitle({
+    const indexBeforeSwipe = currentIndex;
+    advanceDeck();
+    void (async () => {
+      try {
+        await titleHelpers.upsertTitle({
         tmdb_id: title.id,
         type: title.type,
         title: title.title,
@@ -328,18 +548,21 @@ export default function SwipeScreen() {
           console.error('❌ Error creating match (watched):', error);
         }
       }
-
-      advanceDeck();
     } catch (error) {
       console.error('Error saving watched swipe:', error);
+      rollbackDeckAfterFailedSave(indexBeforeSwipe);
       Alert.alert('Error', 'Failed to save');
     }
+    })();
   };
 
-  const handleSwipeLeft = async (title: MockTitle) => {
+  const handleSwipeLeft = (title: MockTitle) => {
     if (!user) return;
-    try {
-      await titleHelpers.upsertTitle({
+    const indexBeforeSwipe = currentIndex;
+    advanceDeck();
+    void (async () => {
+      try {
+        await titleHelpers.upsertTitle({
         tmdb_id: title.id,
         type: title.type,
         title: title.title,
@@ -376,54 +599,12 @@ export default function SwipeScreen() {
           console.error('❌ Error removing match:', error);
         }
       }
-
-      advanceDeck();
     } catch (error) {
       console.error('Error saving swipe:', error);
+      rollbackDeckAfterFailedSave(indexBeforeSwipe);
       Alert.alert('Error', 'Failed to save swipe');
     }
-  };
-
-  const loadMoreTitles = async () => {
-    if (!user || loading) return;
-
-    const type = mediaTypeRef.current;
-    try {
-      const nextPage = currentPage + 1;
-      const feedResponse = await feedHelpers.getFeed({ type, limit: 20, page: nextPage });
-
-      if (feedResponse.items.length === 0) {
-        return;
-      }
-
-      const newTitles: MockTitle[] = feedResponse.items.map((item) => ({
-        id: item.tmdb_id,
-        title: item.title,
-        original_title: item.title,
-        overview: item.overview,
-        poster_path: item.poster_path,
-        backdrop_path: null,
-        release_date: item.release_date || undefined,
-        first_air_date: item.first_air_date || undefined,
-        vote_average: item.vote_average || 0,
-        vote_count: item.vote_count || 0,
-        popularity: item.popularity || 0,
-        type,
-        genre_ids: item.genre_ids ?? [],
-      }));
-
-      const existingIds = new Set(titles.map(t => `${t.type}-${t.id}`));
-      const uniqueNewTitles = newTitles.filter(
-        title => !existingIds.has(`${title.type}-${title.id}`)
-      );
-
-      if (uniqueNewTitles.length > 0) {
-        setTitles(prev => [...prev, ...uniqueNewTitles]);
-        setCurrentPage(nextPage);
-      }
-    } catch (error) {
-      console.error('Error loading more titles:', error);
-    }
+    })();
   };
 
   if (!hasPreferences) {
@@ -453,7 +634,35 @@ export default function SwipeScreen() {
     );
   }
 
-  if (titles.length === 0 || currentIndex >= swipeDeck.length) {
+  if (titles.length === 0) {
+    return (
+      <ThemedView style={styles.container}>
+        <MediaTypeToggle value={mediaType} onChange={setMediaType} />
+        <ThemedText type="title" style={styles.emptyTitle}>
+          No {mediaType === 'tv' ? 'Shows' : 'Movies'} to Display
+        </ThemedText>
+        <ThemedText style={styles.emptyText}>
+          Check back later for more recommendations!
+        </ThemedText>
+        <TouchableOpacity style={styles.refreshButton} onPress={loadTitles}>
+          <ThemedText style={styles.refreshButtonText}>Refresh</ThemedText>
+        </TouchableOpacity>
+      </ThemedView>
+    );
+  }
+
+  if (currentIndex >= swipeDeck.length) {
+    const stillTrying = loadingMore || (!feedExhausted && titles.length > 0);
+    if (stillTrying) {
+      return (
+        <ThemedView style={styles.container}>
+          <MediaTypeToggle value={mediaType} onChange={setMediaType} />
+          <ThemedText style={styles.emptyText}>
+            Loading more {mediaType === 'tv' ? 'shows' : 'movies'}...
+          </ThemedText>
+        </ThemedView>
+      );
+    }
     return (
       <ThemedView style={styles.container}>
         <MediaTypeToggle value={mediaType} onChange={setMediaType} />

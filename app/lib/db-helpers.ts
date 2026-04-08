@@ -3,8 +3,55 @@
  * These functions provide type-safe wrappers around Supabase queries
  */
 
-import { supabase } from './supabase';
+import type { Session, User as SupabaseUser } from '@supabase/supabase-js';
+
+import { getSupabaseAnonKey, getSupabaseUrl, supabase } from './supabase';
 import type { Database } from './database.types';
+import {
+  normalizeUnifiedSlugs,
+  slugsFromLegacyMovieGenreIds,
+  UNIFIED_GENRE_SLUGS,
+} from './unified-genres';
+
+/**
+ * Call Edge Functions with plain fetch. On Android/React Native, `supabase.functions.invoke`
+ * often omits the `Authorization` header in the actual HTTP request (401 in logs with no auth header).
+ */
+async function invokeEdgeFunctionPost<TResponse>(
+  functionName: string,
+  session: Session,
+  body: Record<string, unknown>
+): Promise<TResponse> {
+  const base = getSupabaseUrl().replace(/\/$/, '');
+  const url = `${base}/functions/v1/${functionName}`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: getSupabaseAnonKey(),
+      Authorization: `Bearer ${session.access_token}`,
+    },
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  let json: Record<string, unknown> = {};
+  if (text) {
+    try {
+      json = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      throw new Error(text.slice(0, 200) || `Edge function ${functionName} returned ${res.status}`);
+    }
+  }
+  if (!res.ok) {
+    const msg =
+      (typeof json.error === 'string' && json.error) ||
+      (typeof json.message === 'string' && json.message) ||
+      (typeof json.hint === 'string' && json.hint) ||
+      `Request failed (${res.status})`;
+    throw new Error(msg);
+  }
+  return json as TResponse;
+}
 
 type Tables<T extends keyof Database['public']['Tables']> = Database['public']['Tables'][T]['Row'];
 type Inserts<T extends keyof Database['public']['Tables']> = Database['public']['Tables'][T]['Insert'];
@@ -58,6 +105,29 @@ export const profileHelpers = {
     
     if (error) throw error;
     return data;
+  },
+
+  /**
+   * Ensures a profiles row exists (FK target for user_providers / user_unified_genres).
+   * Handles rare cases where the auth trigger did not run or failed.
+   */
+  async ensureProfile(user: SupabaseUser): Promise<void> {
+    const existing = await this.getProfile(user.id);
+    if (existing) return;
+
+    const displayName =
+      (typeof user.user_metadata?.name === 'string' && user.user_metadata.name.trim()) ||
+      user.email?.split('@')[0] ||
+      'User';
+    const { error } = await supabase.from('profiles').insert({
+      id: user.id,
+      display_name: displayName,
+      email: user.email ?? null,
+    });
+
+    if (error && error.code !== '23505') {
+      throw error;
+    }
   },
 
   /**
@@ -403,9 +473,29 @@ export const streamingServiceHelpers = {
       .from('tmdb_providers_movie')
       .select('*')
       .order('provider_name');
-    
-    if (error) throw error;
-    return data || [];
+
+    if (!error && (data?.length ?? 0) > 0) {
+      return data || [];
+    }
+
+    // Backward-compatible fallback for projects still on legacy tables.
+    const { data: legacyData, error: legacyError } = await supabase
+      .from('streaming_services')
+      .select('*')
+      .order('name');
+
+    if (legacyError) {
+      if (error) throw error;
+      throw legacyError;
+    }
+
+    return (legacyData || []).map((item) => ({
+      provider_id: Number(item.provider_key),
+      provider_name: item.name,
+      logo_path: item.logo_url,
+      display_priority: null,
+      updated_at: item.created_at,
+    }));
   },
 
   async getUserServices(userId: string): Promise<TMDBProvider[]> {
@@ -413,12 +503,36 @@ export const streamingServiceHelpers = {
       .from('user_providers')
       .select('tmdb_providers_movie(*)')
       .eq('user_id', userId);
-    
-    if (error) throw error;
-    // Filter out null values in case of missing joins
-    return (data || [])
-      .map((item: any) => item.tmdb_providers_movie)
-      .filter((provider: any) => provider != null);
+
+    if (!error) {
+      // Filter out null values in case of missing joins
+      const joined = (data || [])
+        .map((item: any) => item.tmdb_providers_movie)
+        .filter((provider: any) => provider != null);
+      if (joined.length > 0) return joined;
+    }
+
+    // Backward-compatible fallback for legacy user streaming service schema.
+    const { data: legacyData, error: legacyError } = await supabase
+      .from('user_streaming_services')
+      .select('streaming_services(*)')
+      .eq('user_id', userId);
+
+    if (legacyError) {
+      if (error) throw error;
+      throw legacyError;
+    }
+
+    return (legacyData || [])
+      .map((item: any) => item.streaming_services)
+      .filter((provider: any) => provider != null)
+      .map((item: any) => ({
+        provider_id: Number(item.provider_key),
+        provider_name: item.name,
+        logo_path: item.logo_url,
+        display_priority: null,
+        updated_at: item.created_at,
+      }));
   },
 
   async addUserService(userId: string, providerId: number): Promise<void> {
@@ -456,10 +570,9 @@ export const streamingServiceHelpers = {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) throw new Error('Not authenticated');
 
-    const response = await supabase.functions.invoke('sync_providers');
-    if (response.error) throw response.error;
-    if (response.data && typeof response.data === 'object' && (response.data as any).error) {
-      throw new Error((response.data as any).error);
+    const data = await invokeEdgeFunctionPost<Record<string, unknown>>('sync_providers', session, {});
+    if (typeof data.error === 'string' && data.error) {
+      throw new Error(data.error);
     }
   },
 };
@@ -516,6 +629,50 @@ export const genreHelpers = {
     
     if (error) throw error;
     return data || [];
+  },
+};
+
+/**
+ * Unified genre slugs (one picker for movies + TV; TMDB IDs differ per medium in Edge Function).
+ */
+export const unifiedGenreHelpers = {
+  async getUserSlugs(userId: string): Promise<string[]> {
+    const { data, error } = await supabase
+      .from('user_unified_genres')
+      .select('slug')
+      .eq('user_id', userId);
+    if (error) throw error;
+    return normalizeUnifiedSlugs((data ?? []).map((r) => r.slug).filter(Boolean));
+  },
+
+  /**
+   * Replace all unified genre rows for the user. Clears legacy user_genres so the feed uses one source.
+   */
+  async setUserSlugs(userId: string, slugs: string[]): Promise<void> {
+    const unique = normalizeUnifiedSlugs(
+      slugs.filter((s) => s && UNIFIED_GENRE_SLUGS.has(s))
+    );
+    const { error: delUnified } = await supabase
+      .from('user_unified_genres')
+      .delete()
+      .eq('user_id', userId);
+    if (delUnified) throw delUnified;
+    if (unique.length > 0) {
+      const { error: ins } = await supabase.from('user_unified_genres').insert(
+        unique.map((slug) => ({ user_id: userId, slug }))
+      );
+      if (ins) throw ins;
+    }
+    const { error: delLegacy } = await supabase.from('user_genres').delete().eq('user_id', userId);
+    if (delLegacy) throw delLegacy;
+  },
+
+  /** Slugs for UI: DB first, else map legacy movie genre rows (before migration / save). */
+  async getUserSlugsOrLegacy(userId: string): Promise<string[]> {
+    const fromDb = await this.getUserSlugs(userId);
+    if (fromDb.length > 0) return fromDb;
+    const legacy = await genreHelpers.getUserGenres(userId);
+    return slugsFromLegacyMovieGenreIds(legacy.map((g) => g.genre_id));
   },
 };
 
@@ -961,50 +1118,24 @@ export const feedHelpers = {
     }
 
     const type = options.type === 'tv' ? 'tv' : 'movie';
-    const response = await supabase.functions.invoke('feed_movies', {
-      body: {
-        type,
-        limit: options.limit || 20,
-        page: options.page || 1,
-        includeRentBuy: true,
-        includeFlatrate: true,
-      },
+    return invokeEdgeFunctionPost<FeedMoviesResponse>('feed_movies', session, {
+      type,
+      limit: options.limit || 20,
+      page: options.page || 1,
+      includeRentBuy: true,
+      includeFlatrate: true,
     });
+  },
+};
 
-    if (response.error) {
-      // Log full response for debugging
-      console.error('❌ Edge Function error response:', {
-        error: response.error,
-        data: response.data,
-        status: (response.error as any)?.status,
-        message: response.error.message,
-      });      // Try to extract error message from various possible locations
-      let errorMessage = 'Unknown error';
-      let errorDetails = '';
-      
-      // Check if response.data is a JSON object with error info
-      if (response.data && typeof response.data === 'object') {
-        errorMessage = (response.data as any).error || (response.data as any).message || errorMessage;
-        errorDetails = (response.data as any).details || '';
-      }
-      
-      // Fallback to error.message if we didn't find anything in data
-      if (errorMessage === 'Unknown error' && response.error.message) {
-        errorMessage = response.error.message;
-      }
-      
-      // Create enhanced error with all available info
-      const enhancedError = new Error(errorMessage);
-      (enhancedError as any).code = (response.error as any)?.name || (response.error as any)?.code || 'FUNCTIONS_ERROR';
-      (enhancedError as any).details = errorDetails;
-      (enhancedError as any).status = (response.error as any)?.status;
-      (enhancedError as any).originalError = response.error;
-      (enhancedError as any).responseData = response.data;
-      
-      throw enhancedError;
-    }
-    
-    return response.data as FeedMoviesResponse;
+/**
+ * Permanently delete the signed-in user (auth + cascaded profile data). Avatar files in storage are removed first.
+ */
+export const accountHelpers = {
+  async deleteMyAccount(): Promise<void> {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) throw new Error('Not authenticated');
+    await invokeEdgeFunctionPost<{ ok?: boolean }>('delete_account', session, {});
   },
 };
 
@@ -1034,23 +1165,10 @@ export const searchHelpers = {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) throw new Error('Not authenticated');
 
-    const response = await supabase.functions.invoke('search_tmdb', {
-      body: { query: query.trim(), page },
+    const data = await invokeEdgeFunctionPost<TmdbSearchResponse>('search_tmdb', session, {
+      query: query.trim(),
+      page,
     });
-
-    if (response.error) {
-      const err = response.error as any;
-      const status = err?.status ?? err?.context?.status;
-      const body = response.data as any;
-      const msg = body?.error ?? body?.message ?? response.error.message ?? 'Search failed';
-      const fullMsg = status ? `Search failed (${status}): ${msg}` : msg;
-      if (__DEV__ && (body || status)) {
-        console.warn('search_tmdb response:', { status, data: body, error: response.error });
-      }
-      throw new Error(fullMsg);
-    }
-
-    const data = response.data as TmdbSearchResponse;
     return {
       results: data?.results ?? [],
       page: data?.page ?? 1,

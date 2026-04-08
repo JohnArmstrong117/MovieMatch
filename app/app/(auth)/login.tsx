@@ -104,14 +104,6 @@ export default function LoginScreen() {
           </Link>
         </View>
 
-        {/* Debug Info */}
-        <ThemedView style={styles.debugContainer}>
-          <ThemedText style={styles.debugTitle}>Debug Info</ThemedText>
-          <ThemedText style={styles.debugText}>
-            Supabase URL: http://127.0.0.1:54321{'\n'}
-            Make sure Supabase is running locally
-          </ThemedText>
-        </ThemedView>
         </ThemedView>
       </TouchableWithoutFeedback>
     </ThemedView>
@@ -177,23 +169,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  debugContainer: {
-    marginTop: 24,
-    padding: 12,
-    backgroundColor: 'rgba(0, 0, 0, 0.05)',
-    borderRadius: 8,
-  },
-  debugTitle: {
-    fontSize: 12,
-    fontWeight: '600',
-    marginBottom: 4,
-    opacity: 0.7,
-  },
-  debugText: {
-    fontSize: 11,
-    opacity: 0.6,
-    fontFamily: 'monospace',
   },
 });
 

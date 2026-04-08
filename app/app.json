@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "app",
+    "name": "Meesh",
     "slug": "app",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -10,7 +10,8 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.anonymous.app",
+      "bundleIdentifier": "com.boxofscrapsstudio.meesh",
+      "buildNumber": "1.0.0",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -28,7 +29,8 @@
         "android.permission.READ_CONTACTS",
         "android.permission.WRITE_CONTACTS"
       ],
-      "package": "com.anonymous.app"
+      "versionCode": 1,
+      "package": "com.boxofscrapsstudio.meesh"
     },
     "web": {
       "output": "static",

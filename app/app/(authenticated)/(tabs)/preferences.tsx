@@ -15,10 +15,11 @@ import { useRouter } from 'expo-router';
 import { useAuth } from '@/contexts/auth-context';
 import {
   streamingServiceHelpers,
-  genreHelpers,
+  unifiedGenreHelpers,
   profileHelpers,
 } from '@/lib/db-helpers';
-import type { TMDBProvider, TMDBGenre } from '@/lib/db-helpers';
+import type { TMDBProvider } from '@/lib/db-helpers';
+import { UNIFIED_GENRES_SORTED } from '@/lib/unified-genres';
 import { ThemedView } from '@/components/themed-view';
 import { ThemedText } from '@/components/themed-text';
 
@@ -31,8 +32,7 @@ export default function PreferencesScreen() {
   const [saving, setSaving] = useState(false);
   const [streamingServices, setStreamingServices] = useState<TMDBProvider[]>([]);
   const [userServices, setUserServices] = useState<number[]>([]);
-  const [genres, setGenres] = useState<TMDBGenre[]>([]);
-  const [userGenres, setUserGenres] = useState<number[]>([]);
+  const [userGenreSlugs, setUserGenreSlugs] = useState<string[]>([]);
   const [countryCode, setCountryCode] = useState<string>('');
   const [providerSearchQuery, setProviderSearchQuery] = useState<string>('');
 
@@ -65,17 +65,15 @@ export default function PreferencesScreen() {
         allServices = await streamingServiceHelpers.getAll();
       }
 
-      const [userServicesData, allGenres, userGenresData, profile] = await Promise.all([
+      const [userServicesData, userSlugs, profile] = await Promise.all([
         streamingServiceHelpers.getUserServices(user.id),
-        genreHelpers.getAll(),
-        genreHelpers.getUserGenres(user.id),
+        unifiedGenreHelpers.getUserSlugsOrLegacy(user.id),
         profileHelpers.getProfile(user.id),
       ]);
 
       setStreamingServices(allServices || []);
       setUserServices((userServicesData || []).map((p: TMDBProvider) => p.provider_id));
-      setGenres(allGenres || []);
-      setUserGenres((userGenresData || []).map((g: TMDBGenre) => g.genre_id));
+      setUserGenreSlugs(userSlugs || []);
       setCountryCode(profile?.country_code || '');
     } catch (error: any) {
       console.error('Error loading preferences:', error);
@@ -94,11 +92,9 @@ export default function PreferencesScreen() {
     );
   };
 
-  const toggleGenre = (genreId: number) => {
-    setUserGenres(prev =>
-      prev.includes(genreId)
-        ? prev.filter(id => id !== genreId)
-        : [...prev, genreId]
+  const toggleGenreSlug = (slug: string) => {
+    setUserGenreSlugs(prev =>
+      prev.includes(slug) ? prev.filter(s => s !== slug) : [...prev, slug]
     );
   };
 
@@ -111,19 +107,18 @@ export default function PreferencesScreen() {
       return;
     }
 
-    if (userGenres.length === 0) {
+    if (userGenreSlugs.length === 0) {
       Alert.alert('Error', 'Please select at least one genre');
       return;
     }
 
     setSaving(true);
     try {
+      await profileHelpers.ensureProfile(user);
+
       // Get current user services and genres
       const currentServices = await streamingServiceHelpers.getUserServices(user.id);
-      const currentGenres = await genreHelpers.getUserGenres(user.id);
-
       const currentProviderIds = currentServices.map(p => p.provider_id);
-      const currentGenreIds = currentGenres.map(g => g.genre_id);
 
       // Remove services that are no longer selected
       for (const providerId of currentProviderIds) {
@@ -139,29 +134,22 @@ export default function PreferencesScreen() {
         }
       }
 
-      // Remove genres that are no longer selected
-      for (const genreId of currentGenreIds) {
-        if (!userGenres.includes(genreId)) {
-          await genreHelpers.removeUserGenre(user.id, genreId);
-        }
-      }
-
-      // Add new genres
-      for (const genreId of userGenres) {
-        if (!currentGenreIds.includes(genreId)) {
-          await genreHelpers.addUserGenre(user.id, genreId);
-        }
-      }
+      await unifiedGenreHelpers.setUserSlugs(user.id, userGenreSlugs);
 
       // Update profile country code
       await profileHelpers.updateProfile(user.id, {
         country_code: countryCode || null,
       });
 
-      router.replace('/(tabs)');
-    } catch (error) {
+      router.replace('/(authenticated)/(tabs)');
+    } catch (error: any) {
       console.error('Error saving preferences:', error);
-      Alert.alert('Error', 'Failed to save preferences');
+      const detail =
+        error?.message || error?.code || error?.details || (typeof error === 'string' ? error : '');
+      Alert.alert(
+        'Error',
+        detail ? `Failed to save preferences: ${detail}` : 'Failed to save preferences'
+      );
     } finally {
       setSaving(false);
     }
@@ -205,23 +193,23 @@ export default function PreferencesScreen() {
           Favorite Genres
         </ThemedText>
         <ThemedText style={styles.sectionDescription}>
-          Select your favorite genres
+          One list for movies and TV — we map each choice to the right TMDB genres per medium.
         </ThemedText>
         <View style={styles.chipContainer}>
-          {genres.map(genre => (
+          {UNIFIED_GENRES_SORTED.map((genre) => (
             <TouchableOpacity
-              key={genre.genre_id}
+              key={genre.slug}
               style={[
                 styles.chip,
-                userGenres.includes(genre.genre_id) && styles.chipActive,
+                userGenreSlugs.includes(genre.slug) && styles.chipActive,
               ]}
-              onPress={() => toggleGenre(genre.genre_id)}>
+              onPress={() => toggleGenreSlug(genre.slug)}>
               <ThemedText
                 style={[
                   styles.chipText,
-                  userGenres.includes(genre.genre_id) && styles.chipTextActive,
+                  userGenreSlugs.includes(genre.slug) && styles.chipTextActive,
                 ]}>
-                {genre.name}
+                {genre.label}
               </ThemedText>
             </TouchableOpacity>
           ))}

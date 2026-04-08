@@ -48,8 +48,12 @@ export default function SignUpScreen() {
 
     setLoading(true);
     try {
-      await signUp(email, password, name, phone);
-      Alert.alert('Success', 'Account created! Please check your email to verify your account.');
+      const session = await signUp(email, password, name, phone);
+      if (session) {
+        router.replace('/(authenticated)/(tabs)');
+        return;
+      }
+      Alert.alert('Almost there', 'Please sign in with your new account.');
       router.replace('/(auth)/login');
     } catch (error: any) {
       Alert.alert('Sign Up Failed', error.message || 'An error occurred during sign up');

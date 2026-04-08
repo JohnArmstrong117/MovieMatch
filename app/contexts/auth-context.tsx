@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import type { User as SupabaseUser, Session } from '@supabase/supabase-js';
+import * as Linking from 'expo-linking';
 import { supabase } from '@/lib/supabase';
 
 type User = SupabaseUser | null;
@@ -9,13 +10,14 @@ type AuthContextType = {
   session: Session | null;
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string, name?: string, phone?: string) => Promise<void>;
+  /** Resolves with a session when the user is signed in immediately (no email confirmation). */
+  signUp: (email: string, password: string, name?: string, phone?: string) => Promise<Session | null>;
   signOut: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
+const RESET_PASSWORD_PATH = '/(auth)/reset-password';
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User>(null);
   const [session, setSession] = useState<Session | null>(null);
@@ -92,7 +94,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (error) throw error;
 
     setSession(data.session);
-    setUser(data.user);
+    setUser(data.user ?? null);
 
     if (data.user && phone && phone.replace(/\D/g, '').length > 0) {
       const normalizedPhone = phone.replace(/\D/g, '');
@@ -101,6 +103,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .update({ phone: normalizedPhone })
         .eq('id', data.user.id);
     }
+
+    return data.session ?? null;
   };
 
   const signOut = async () => {
@@ -127,8 +131,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const resetPassword = async (email: string) => {
+    const redirectTo = Linking.createURL(RESET_PASSWORD_PATH);
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: 'exp://127.0.0.1:8081/--/(auth)/reset-password',
+      redirectTo,
     });
     
     if (error) throw error;

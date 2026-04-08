@@ -12,7 +12,14 @@
       "distribution": "internal"
     },
     "production": {
-      "autoIncrement": true
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://vfewiudkkwmaucnnkjef.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZmZXdpdWRra3dtYXVjbm5ramVmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ5MDMxNjQsImV4cCI6MjA5MDQ3OTE2NH0.6CLv4dfZwZ6TfE0DpMh7A0KUI15kdeCP8Fs4gCRMjwQ",
+        "EXPO_PUBLIC_ADMOB_USE_REAL_ADS": "false",
+        "EXPO_PUBLIC_ADMOB_NATIVE_AD_UNIT_ID_ANDROID": "ca-app-pub-8829125322462367/6492409934",
+        "EXPO_PUBLIC_ADMOB_NATIVE_AD_UNIT_ID_IOS": "ca-app-pub-8829125322462367/7056285590"
+      }
     }
   },
   "submit": {

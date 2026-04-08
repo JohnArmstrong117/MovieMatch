@@ -6,6 +6,7 @@ import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 
 const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 const TMDB_API_KEY = Deno.env.get('TMDB_API_KEY');
+const TMDB_READ_ACCESS_TOKEN = Deno.env.get('TMDB_READ_ACCESS_TOKEN');
 const WATCH_REGION = 'US';
 
 interface TMDBProvider {
@@ -47,10 +48,10 @@ serve(async (req) => {
     return new Response('ok', { headers: corsHeaders });
   }
 
-  if (!TMDB_API_KEY) {
-    console.error('get_watch_providers: TMDB_API_KEY not configured');
+  if (!TMDB_API_KEY && !TMDB_READ_ACCESS_TOKEN) {
+    console.error('get_watch_providers: TMDB API credentials not configured');
     return new Response(
-      JSON.stringify({ error: 'TMDB_API_KEY not configured', providers: [] }),
+      JSON.stringify({ error: 'TMDB API credentials not configured', providers: [] }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
@@ -78,15 +79,18 @@ serve(async (req) => {
       ? `movie/${tmdbId}/watch/providers`
       : `tv/${tmdbId}/watch/providers`;
     // Don't pass watch_region: TMDB returns full results by country; we read US below.
-    const params = new URLSearchParams({ api_key: TMDB_API_KEY });
+    const params = new URLSearchParams();
+    if (TMDB_API_KEY) {
+      params.set('api_key', TMDB_API_KEY);
+    }
     const providerUrl = `${TMDB_BASE_URL}/${path}?${params.toString()}`;
 
-    const res = await fetch(providerUrl, {
-      headers: {
-        'Accept': 'application/json',
-        ...(TMDB_API_KEY ? { 'Authorization': `Bearer ${TMDB_API_KEY}` } : {}),
-      },
-    });
+    const headers: Record<string, string> = { Accept: 'application/json' };
+    if (TMDB_READ_ACCESS_TOKEN) {
+      headers.Authorization = `Bearer ${TMDB_READ_ACCESS_TOKEN}`;
+    }
+
+    const res = await fetch(providerUrl, { headers });
     if (!res.ok) {
       const text = await res.text();
       console.error('TMDB watch providers error:', res.status, text);

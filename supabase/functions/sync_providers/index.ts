@@ -1,12 +1,13 @@
 // Edge Function: sync_providers
 // Fetches streaming providers from TMDB API and populates the database
-// Requires: TMDB_API_KEY secret
+// Requires: TMDB_API_KEY (v3) or TMDB_READ_ACCESS_TOKEN (v4) secret
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 const TMDB_API_KEY = Deno.env.get('TMDB_API_KEY');
+const TMDB_READ_ACCESS_TOKEN = Deno.env.get('TMDB_READ_ACCESS_TOKEN');
 
 interface TMDBProvider {
   provider_id: number;
@@ -31,9 +32,12 @@ serve(async (req) => {
   }
 
   try {
-    if (!TMDB_API_KEY) {
+    if (!TMDB_API_KEY && !TMDB_READ_ACCESS_TOKEN) {
       return new Response(
-        JSON.stringify({ error: 'TMDB_API_KEY not configured' }),
+        JSON.stringify({
+          error: 'TMDB API credentials not configured',
+          hint: 'Set TMDB_API_KEY (v3) or TMDB_READ_ACCESS_TOKEN (v4) in Supabase Edge Function secrets.',
+        }),
         {
           status: 500,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -54,11 +58,16 @@ serve(async (req) => {
     console.log('📡 Fetching watch providers from TMDB API...');
 
     // Fetch watch providers for US region (can be made configurable)
-    const watchProvidersUrl = `${TMDB_BASE_URL}/watch/providers/movie?api_key=${TMDB_API_KEY}&watch_region=US`;
+    const params = new URLSearchParams({ watch_region: 'US' });
+    if (TMDB_API_KEY) {
+      params.set('api_key', TMDB_API_KEY);
+    }
+    const watchProvidersUrl = `${TMDB_BASE_URL}/watch/providers/movie?${params.toString()}`;
     
     const response = await fetch(watchProvidersUrl, {
       headers: {
         'Accept': 'application/json',
+        ...(TMDB_READ_ACCESS_TOKEN ? { Authorization: `Bearer ${TMDB_READ_ACCESS_TOKEN}` } : {}),
       },
     });
 
