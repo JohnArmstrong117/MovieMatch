@@ -24,6 +24,8 @@ export interface Database {
           avatar_color: string | null
           email: string | null
           phone: string | null
+          terms_accepted_at: string | null
+          terms_version: string | null
           created_at: string
           updated_at: string
         }
@@ -35,6 +37,8 @@ export interface Database {
           avatar_color?: string | null
           email?: string | null
           phone?: string | null
+          terms_accepted_at?: string | null
+          terms_version?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -46,6 +50,8 @@ export interface Database {
           avatar_color?: string | null
           email?: string | null
           phone?: string | null
+          terms_accepted_at?: string | null
+          terms_version?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -273,6 +279,55 @@ export interface Database {
           updated_at?: string
         }
       }
+      user_blocks: {
+        Row: {
+          blocker_id: string
+          blocked_id: string
+          created_at: string
+        }
+        Insert: {
+          blocker_id: string
+          blocked_id: string
+          created_at?: string
+        }
+        Update: {
+          blocker_id?: string
+          blocked_id?: string
+          created_at?: string
+        }
+      }
+      moderation_reports: {
+        Row: {
+          id: string
+          reporter_id: string
+          subject_user_id: string
+          recommendation_id: string | null
+          event_type: 'report' | 'block'
+          reason_code: string
+          reason_detail: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          reporter_id: string
+          subject_user_id: string
+          recommendation_id?: string | null
+          event_type: 'report' | 'block'
+          reason_code: string
+          reason_detail?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          reporter_id?: string
+          subject_user_id?: string
+          recommendation_id?: string | null
+          event_type?: 'report' | 'block'
+          reason_code?: string
+          reason_detail?: string | null
+          created_at?: string
+        }
+      }
       recommendations: {
         Row: {
           id: string
@@ -432,6 +487,97 @@ export interface Database {
           user_id: string
           display_name: string | null
         }[]
+      }
+      moderation_text_is_allowed: {
+        Args: {
+          p_text: string
+        }
+        Returns: boolean
+      }
+      moderation_list_version: {
+        Args: Record<string, never>
+        Returns: string
+      }
+      get_recommendations_received: {
+        Args: Record<string, never>
+        Returns: {
+          id: string
+          from_user_id: string
+          from_user_display_name: string | null
+          tmdb_id: number
+          type: string
+          created_at: string
+          message: string | null
+          title: string | null
+          original_title: string | null
+          poster_path: string | null
+          backdrop_path: string | null
+          overview: string | null
+          release_date: string | null
+          first_air_date: string | null
+          vote_average: number | null
+        }[]
+      }
+      get_recommendations_received_unread_count: {
+        Args: {
+          p_since?: string | null
+        }
+        Returns: number
+      }
+      get_shared_matches_with_friend: {
+        Args: {
+          p_friend_id: string
+        }
+        Returns: Record<string, unknown>[]
+      }
+      list_accepted_friends_for_user: {
+        Args: Record<string, never>
+        Returns: {
+          id: string
+          display_name: string | null
+          avatar_url: string | null
+          request_id: string
+          created_at: string
+        }[]
+      }
+      search_profiles_for_friends: {
+        Args: {
+          p_query: string
+          p_limit?: number | null
+        }
+        Returns: {
+          id: string
+          display_name: string | null
+        }[]
+      }
+      user_ids_with_block_relationship: {
+        Args: Record<string, never>
+        Returns: {
+          other_user_id: string
+        }[]
+      }
+      is_blocked_with: {
+        Args: {
+          p_other_user_id: string
+        }
+        Returns: boolean
+      }
+      report_recommendation: {
+        Args: {
+          p_recommendation_id: string
+          p_reason_code: string
+          p_reason_detail: string
+        }
+        Returns: undefined
+      }
+      block_user: {
+        Args: {
+          p_blocked_id: string
+          p_reason_code: string
+          p_reason_detail: string
+          p_recommendation_id?: string | null
+        }
+        Returns: undefined
       }
     }
   }

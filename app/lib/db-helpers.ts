@@ -12,6 +12,7 @@ import {
   slugsFromLegacyMovieGenreIds,
   UNIFIED_GENRE_SLUGS,
 } from './unified-genres';
+import { assertModerationAllowed, checkModerationAllowed } from './moderation';
 
 /**
  * Call Edge Functions with plain fetch. On Android/React Native, `supabase.functions.invoke`
@@ -96,6 +97,12 @@ export const profileHelpers = {
   },
 
   async updateProfile(userId: string, updates: Updates<'profiles'>): Promise<Profile> {
+    if (updates.display_name !== undefined && updates.display_name !== null) {
+      const dn = String(updates.display_name).trim();
+      if (dn.length > 0) {
+        await assertModerationAllowed(dn);
+      }
+    }
     const { data, error } = await supabase
       .from('profiles')
       .update(updates)
@@ -115,10 +122,13 @@ export const profileHelpers = {
     const existing = await this.getProfile(user.id);
     if (existing) return;
 
-    const displayName =
+    let displayName =
       (typeof user.user_metadata?.name === 'string' && user.user_metadata.name.trim()) ||
       user.email?.split('@')[0] ||
       'User';
+    if (displayName.trim() && !(await checkModerationAllowed(displayName))) {
+      displayName = 'User';
+    }
     const { error } = await supabase.from('profiles').insert({
       id: user.id,
       display_name: displayName,
@@ -177,38 +187,46 @@ export type PendingRequestWithProfile = {
  * Friends helpers
  */
 export const friendHelpers = {
-  /** List of accepted friends (other user id + display_name) */
-  async getFriends(userId: string): Promise<FriendWithProfile[]> {
-    const { data, error } = await supabase
-      .from('friend_requests')
-      .select('id, from_user_id, to_user_id, created_at')
-      .or(`from_user_id.eq.${userId},to_user_id.eq.${userId}`)
-      .eq('status', 'accepted');
+  /** User ids involved in any block with the current user (either direction). */
+  async getBlockedRelatedUserIds(): Promise<Set<string>> {
+    const { data, error } = await supabase.rpc('user_ids_with_block_relationship');
     if (error) throw error;
-    const list = (data || []) as { id: string; from_user_id: string; to_user_id: string; created_at: string }[];
-    const friendIds = list.map((r) => (r.from_user_id === userId ? r.to_user_id : r.from_user_id));
-    if (friendIds.length === 0) return [];
-    const { data: profiles, error: profError } = await supabase
-      .from('profiles')
-      .select('id, display_name, avatar_url')
-      .in('id', friendIds);
-    if (profError) throw profError;
-    const byId = new Map((profiles || []).map((p) => [p.id, p]));
-    return list.map((r) => {
-      const friendId = r.from_user_id === userId ? r.to_user_id : r.from_user_id;
-      const p = byId.get(friendId);
-      return {
-        id: friendId,
-        display_name: p?.display_name ?? null,
-        avatar_url: p?.avatar_url ?? null,
-        request_id: r.id,
-        created_at: r.created_at,
-      };
+    const rows = (data ?? []) as { other_user_id: string }[];
+    return new Set(rows.map((r) => r.other_user_id));
+  },
+
+  /** True if the current user cannot interact with the other user (block exists either way). */
+  async isBlockedWith(otherUserId: string): Promise<boolean> {
+    const { data, error } = await supabase.rpc('is_blocked_with', {
+      p_other_user_id: otherUserId,
     });
+    if (error) throw error;
+    return data === true;
+  },
+
+  /** List of accepted friends (excludes anyone you have a block relationship with). */
+  async getFriends(): Promise<FriendWithProfile[]> {
+    const { data, error } = await supabase.rpc('list_accepted_friends_for_user');
+    if (error) throw error;
+    const rows = (data ?? []) as {
+      id: string;
+      display_name: string | null;
+      avatar_url: string | null;
+      request_id: string;
+      created_at: string;
+    }[];
+    return rows.map((r) => ({
+      id: r.id,
+      display_name: r.display_name,
+      avatar_url: r.avatar_url,
+      request_id: r.request_id,
+      created_at: r.created_at,
+    }));
   },
 
   /** Pending requests received (others want to be friends with me) */
   async getPendingReceived(userId: string): Promise<PendingRequestWithProfile[]> {
+    const blocked = await this.getBlockedRelatedUserIds();
     const { data, error } = await supabase
       .from('friend_requests')
       .select('id, from_user_id, created_at')
@@ -216,11 +234,12 @@ export const friendHelpers = {
       .eq('status', 'pending');
     if (error) throw error;
     const list = (data || []) as { id: string; from_user_id: string; created_at: string }[];
-    if (list.length === 0) return [];
-    const ids = list.map((r) => r.from_user_id);
+    const filtered = list.filter((r) => !blocked.has(r.from_user_id));
+    if (filtered.length === 0) return [];
+    const ids = filtered.map((r) => r.from_user_id);
     const { data: profiles } = await supabase.from('profiles').select('id, display_name').in('id', ids);
     const byId = new Map((profiles || []).map((p) => [p.id, p]));
-    return list.map((r) => {
+    return filtered.map((r) => {
       const p = byId.get(r.from_user_id);
       return {
         id: r.from_user_id,
@@ -234,6 +253,7 @@ export const friendHelpers = {
 
   /** Pending requests sent (I requested them) */
   async getPendingSent(userId: string): Promise<PendingRequestWithProfile[]> {
+    const blocked = await this.getBlockedRelatedUserIds();
     const { data, error } = await supabase
       .from('friend_requests')
       .select('id, to_user_id, created_at')
@@ -241,11 +261,12 @@ export const friendHelpers = {
       .eq('status', 'pending');
     if (error) throw error;
     const list = (data || []) as { id: string; to_user_id: string; created_at: string }[];
-    if (list.length === 0) return [];
-    const ids = list.map((r) => r.to_user_id);
+    const filtered = list.filter((r) => !blocked.has(r.to_user_id));
+    if (filtered.length === 0) return [];
+    const ids = filtered.map((r) => r.to_user_id);
     const { data: profiles } = await supabase.from('profiles').select('id, display_name').in('id', ids);
     const byId = new Map((profiles || []).map((p) => [p.id, p]));
-    return list.map((r) => {
+    return filtered.map((r) => {
       const p = byId.get(r.to_user_id);
       return {
         id: r.to_user_id,
@@ -257,27 +278,47 @@ export const friendHelpers = {
     });
   },
 
-  /** Search users by display_name (for adding friends). Excludes self and existing friends/pending. */
-  async searchByDisplayName(userId: string, query: string, limit = 20): Promise<{ id: string; display_name: string | null }[]> {
+  /** Search users by display_name (for adding friends). Excludes self, blocks, and existing friends/pending. */
+  async searchByDisplayName(query: string, limit = 20): Promise<{ id: string; display_name: string | null }[]> {
     const q = query.trim();
     if (!q) return [];
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('id, display_name')
-      .neq('id', userId)
-      .ilike('display_name', `%${q}%`);
+    const { data, error } = await supabase.rpc('search_profiles_for_friends', {
+      p_query: q,
+      p_limit: limit,
+    });
     if (error) throw error;
-    let results = (data || []).slice(0, limit);
-    const { data: existing } = await supabase
-      .from('friend_requests')
-      .select('from_user_id, to_user_id')
-      .or(`from_user_id.eq.${userId},to_user_id.eq.${userId}`);
-    const existingIds = new Set(
-      (existing || []).flatMap((r: { from_user_id: string; to_user_id: string }) =>
-        r.from_user_id === userId ? [r.to_user_id] : [r.from_user_id]
-      )
-    );
-    return results.filter((p) => !existingIds.has(p.id));
+    return (data ?? []) as { id: string; display_name: string | null }[];
+  },
+
+  /** Report a received recommendation message (moderation queue). */
+  async reportRecommendation(
+    recommendationId: string,
+    reasonCode: string,
+    reasonDetail?: string | null
+  ): Promise<void> {
+    const { error } = await supabase.rpc('report_recommendation', {
+      p_recommendation_id: recommendationId,
+      p_reason_code: reasonCode,
+      p_reason_detail: reasonDetail ?? '',
+    });
+    if (error) throw error;
+  },
+
+  /**
+   * Block a user: creates a moderation event, removes any friend/pending rows between you,
+   * and hides them from inbox, search, and recommendations going forward.
+   */
+  async blockUser(
+    blockedUserId: string,
+    opts?: { reasonCode?: string; reasonDetail?: string | null; recommendationId?: string | null }
+  ): Promise<void> {
+    const { error } = await supabase.rpc('block_user', {
+      p_blocked_id: blockedUserId,
+      p_reason_code: opts?.reasonCode ?? 'unspecified',
+      p_reason_detail: opts?.reasonDetail ?? '',
+      p_recommendation_id: opts?.recommendationId ?? null,
+    });
+    if (error) throw error;
   },
 
   async sendRequest(fromUserId: string, toUserId: string): Promise<void> {
@@ -332,9 +373,8 @@ export const friendHelpers = {
   },
 
   /** Shared matches with a friend (titles in both users' match lists). Same row shape as get_liked_matches_with_titles. */
-  async getSharedMatchesWithFriend(userId: string, friendId: string): Promise<any[]> {
+  async getSharedMatchesWithFriend(friendId: string): Promise<any[]> {
     const { data, error } = await supabase.rpc('get_shared_matches_with_friend', {
-      p_user_id: userId,
       p_friend_id: friendId,
     });
     if (error) throw error;
@@ -367,24 +407,24 @@ export const friendHelpers = {
       type,
     };
     const trimmed = typeof message === 'string' ? message.trim() : '';
-    if (trimmed) payload.message = trimmed;
+    if (trimmed) {
+      await assertModerationAllowed(trimmed);
+      payload.message = trimmed;
+    }
     const { error } = await supabase.from('recommendations').insert(payload);
     if (error) throw error;
   },
 
-  /** Recommendations received by the user (inbox), with sender name and title info. */
-  async getRecommendationsReceived(userId: string): Promise<RecommendationReceived[]> {
-    const { data, error } = await supabase.rpc('get_recommendations_received', {
-      p_user_id: userId,
-    });
+  /** Recommendations received by the current user (inbox), with sender name and title info. Excludes blocked users. */
+  async getRecommendationsReceived(): Promise<RecommendationReceived[]> {
+    const { data, error } = await supabase.rpc('get_recommendations_received');
     if (error) throw error;
     return (data ?? []) as RecommendationReceived[];
   },
 
   /** Count of recommendations received since the given ISO timestamp (for inbox badge). If since is null, returns total. */
-  async getRecommendationsReceivedUnreadCount(userId: string, sinceIso: string | null): Promise<number> {
+  async getRecommendationsReceivedUnreadCount(sinceIso: string | null): Promise<number> {
     const { data, error } = await supabase.rpc('get_recommendations_received_unread_count', {
-      p_user_id: userId,
       p_since: sinceIso,
     });
     if (error) throw error;
