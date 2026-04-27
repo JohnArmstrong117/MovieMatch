@@ -12,7 +12,8 @@ import { ThemedText } from '@/components/themed-text';
 import { genreHelpers, streamingServiceHelpers, titleHelpers, feedHelpers, matchHelpers, unifiedGenreHelpers } from '@/lib/db-helpers';
 import { mergeTvGenreLabelsIntoMap } from '@/lib/unified-genres';
 import { MediaTypeToggle } from '@/components/media-type-toggle';
-import { NativeAd, TestIds } from 'react-native-google-mobile-ads';
+import { ensureMobileAdsInitialized } from '@/lib/mobile-ads';
+import { NativeAd } from 'react-native-google-mobile-ads';
 
 type SwipeDeckItem =
   | { kind: 'title'; id: string; title: MockTitle }
@@ -35,20 +36,18 @@ function countTitleCardsAhead(deck: SwipeDeckItem[], fromIndex: number): number 
   }
   return n;
 }
-/** Set in `eas.json` for production; local/dev builds omit it and use test ads. */
+
 const USE_REAL_ADS = process.env.EXPO_PUBLIC_ADMOB_USE_REAL_ADS === 'true';
 
 function nativeAdUnitIdForBuild(): string {
-  if (!USE_REAL_ADS) return TestIds.NATIVE;
+  if (!USE_REAL_ADS) return 'ca-app-pub-3940256099942544/2247696110';
   const universal = process.env.EXPO_PUBLIC_ADMOB_NATIVE_AD_UNIT_ID;
   const forPlatform =
     Platform.OS === 'ios'
       ? process.env.EXPO_PUBLIC_ADMOB_NATIVE_AD_UNIT_ID_IOS ?? universal
       : process.env.EXPO_PUBLIC_ADMOB_NATIVE_AD_UNIT_ID_ANDROID ?? universal;
-  return forPlatform || TestIds.NATIVE;
+  return forPlatform || 'ca-app-pub-3940256099942544/2247696110';
 }
-
-const NATIVE_AD_UNIT_ID = nativeAdUnitIdForBuild();
 
 export default function SwipeScreen() {
   const { user } = useAuth();
@@ -73,6 +72,17 @@ export default function SwipeScreen() {
   const [selectedTitle, setSelectedTitle] = useState<MockTitle | null>(null);
   const [genreById, setGenreById] = useState<Map<number, string> | null>(null);
   const [nativeAdsById, setNativeAdsById] = useState<Record<string, NativeAd>>({});
+  const nativeAdsByIdRef = useRef<Record<string, NativeAd>>({});
+  const [adNoFillBySlotId, setAdNoFillBySlotId] = useState<Record<string, string>>({});
+  const nativeAdUnitId = nativeAdUnitIdForBuild();
+
+  useEffect(() => {
+    nativeAdsByIdRef.current = nativeAdsById;
+  }, [nativeAdsById]);
+
+  useEffect(() => {
+    void ensureMobileAdsInitialized();
+  }, []);
 
   useEffect(() => {
     checkPreferences();
@@ -419,29 +429,49 @@ export default function SwipeScreen() {
     );
   }, []);
 
+  // Preload native ads ahead of the current card. Do not depend on `nativeAdsById` — that caused the
+  // effect to re-run on every load, cancelling in-flight requests and slowing iOS fills.
   useEffect(() => {
     const upcomingAdIds = swipeDeck
       .slice(currentIndex, currentIndex + 30)
       .filter((item): item is Extract<SwipeDeckItem, { kind: 'ad' }> => item.kind === 'ad')
       .map((item) => item.id)
-      .filter((id) => !nativeAdsById[id]);
+      .filter((id) => !nativeAdsByIdRef.current[id] && !adNoFillBySlotId[id]);
 
     if (upcomingAdIds.length === 0) return;
     let cancelled = false;
 
     (async () => {
+      try {
+        await ensureMobileAdsInitialized();
+      } catch (e) {
+        console.warn('[MobileAds] Skipping native ad preload until SDK is ready:', e);
+        return;
+      }
       for (const adId of upcomingAdIds) {
+        if (nativeAdsByIdRef.current[adId]) continue;
         try {
-          const ad = await NativeAd.createForAdRequest(NATIVE_AD_UNIT_ID, {
+          const t0 = Date.now();
+          const ad = await NativeAd.createForAdRequest(nativeAdUnitId, {
             requestNonPersonalizedAdsOnly: true,
           });
+          const ms = Date.now() - t0;
           if (cancelled) {
             ad.destroy();
             continue;
           }
-          setNativeAdsById((prev) => ({ ...prev, [adId]: ad }));
+          setNativeAdsById((prev) => (prev[adId] ? prev : { ...prev, [adId]: ad }));
         } catch (e) {
-          if (__DEV__) console.warn('Native ad preload failed:', e);
+          const err = e as { code?: string; message?: string };
+          const errMsg = err?.message ?? String(e);
+          const isNoFill =
+            err?.code === '1' ||
+            /Code=1/.test(errMsg) ||
+            /No ad to show/i.test(errMsg);
+          if (isNoFill) {
+            setAdNoFillBySlotId((prev) => (prev[adId] ? prev : { ...prev, [adId]: errMsg }));
+          }
+          console.warn('Native ad preload failed:', e);
         }
       }
     })();
@@ -449,13 +479,27 @@ export default function SwipeScreen() {
     return () => {
       cancelled = true;
     };
-  }, [currentIndex, swipeDeck, nativeAdsById]);
+  }, [currentIndex, swipeDeck, adNoFillBySlotId, nativeAdUnitId]);
 
+  // If top deck item is an ad slot that no-filled, skip it immediately so swipe flow never freezes.
+  useEffect(() => {
+    setCurrentIndex((idx) => {
+      const item = swipeDeck[idx];
+      if (!item || item.kind !== 'ad') return idx;
+      if (nativeAdsByIdRef.current[item.id]) return idx;
+      if (!adNoFillBySlotId[item.id]) return idx;
+      return idx + 1;
+    });
+  }, [currentIndex, swipeDeck, adNoFillBySlotId]);
+
+  // Destroy native ads only when screen unmounts. Using `nativeAdsById` as a dependency
+  // causes cleanup to run on every state update, which destroys freshly loaded ads before
+  // they can render / register impressions / receive clicks.
   useEffect(() => {
     return () => {
-      Object.values(nativeAdsById).forEach((ad) => ad.destroy());
+      Object.values(nativeAdsByIdRef.current).forEach((ad) => ad.destroy());
     };
-  }, [nativeAdsById]);
+  }, []);
 
   const handleSwipeRight = (title: MockTitle) => {
     if (!user) return;
@@ -679,53 +723,66 @@ export default function SwipeScreen() {
     );
   }
 
-  // Top card must be titles[currentIndex] so tap/swipe handlers save the correct title.
-  // Don't reverse: first card (index 0) gets highest zIndex and is the one user sees and interacts with.
-  const visibleCards = swipeDeck
-    .slice(currentIndex, currentIndex + 3)
-    .map((item, index) => {
-      if (item.kind === 'ad') {
-        const nativeAd = nativeAdsById[item.id];
-        if (!nativeAd) return null;
-        return (
-          <AdCard
-            key={item.id}
-            nativeAd={nativeAd}
-            onSwipeLeft={advanceDeck}
-            onSwipeRight={advanceDeck}
-            onSwipeUp={advanceDeck}
-            index={index}
-            total={Math.min(3, swipeDeck.length - currentIndex)}
-          />
-        );
-      }
+  // Stack index 0 = top card (gestures enabled). If an ad slot returns null while the native ad loads,
+  // the next title must still use stack index 0 — otherwise pan is disabled (isTopCard = index === 0).
+  const stackSlice = swipeDeck.slice(currentIndex, currentIndex + 3);
+  const firstLiveStackIndex = stackSlice.findIndex((item) => {
+    if (item.kind === 'title') return true;
+    return item.kind === 'ad' && !!nativeAdsById[item.id];
+  });
+  const stackOffset = firstLiveStackIndex === -1 ? 0 : firstLiveStackIndex;
+  const stackRenderedCount = stackSlice.reduce((n, item) => {
+    if (item.kind === 'title') return n + 1;
+    if (item.kind === 'ad' && nativeAdsById[item.id]) return n + 1;
+    return n;
+  }, 0);
+  const stackTotal = Math.max(stackRenderedCount, 1);
 
-      const title = item.title;
-      const genreNames =
-        title.genre_ids?.length && genreById
-          ? title.genre_ids
-              .map((id) => genreById.get(id))
-              .filter(Boolean)
-              .slice(0, 3)
-              .join(', ') || undefined
-          : undefined;
+  const visibleCards = stackSlice.map((item, sliceIndex) => {
+    const stackIndex = sliceIndex - stackOffset;
+
+    if (item.kind === 'ad') {
+      const nativeAd = nativeAdsById[item.id];
+      if (!nativeAd) return null;
       return (
-        <SwipeCard
-          key={`${item.id}-${currentIndex + index}`}
-          title={title}
-          genreNames={genreNames}
-          onSwipeLeft={() => handleSwipeLeft(title)}
-          onSwipeRight={() => handleSwipeRight(title)}
-          onSwipeUp={() => handleSwipeWatched(title)}
-          onDoubleTap={() => {
-            setSelectedTitle(title);
-            setDetailVisible(true);
-          }}
-          index={index}
-          total={Math.min(3, swipeDeck.length - currentIndex)}
+        <AdCard
+          key={item.id}
+          nativeAd={nativeAd}
+          onSwipeLeft={advanceDeck}
+          onSwipeRight={advanceDeck}
+          onSwipeUp={advanceDeck}
+          index={stackIndex}
+          total={stackTotal}
         />
       );
-    });
+    }
+
+    const title = item.title;
+    const genreNames =
+      title.genre_ids?.length && genreById
+        ? title.genre_ids
+            .map((id) => genreById.get(id))
+            .filter(Boolean)
+            .slice(0, 3)
+            .join(', ') || undefined
+        : undefined;
+    return (
+      <SwipeCard
+        key={`${item.id}-${currentIndex + sliceIndex}`}
+        title={title}
+        genreNames={genreNames}
+        onSwipeLeft={() => handleSwipeLeft(title)}
+        onSwipeRight={() => handleSwipeRight(title)}
+        onSwipeUp={() => handleSwipeWatched(title)}
+        onDoubleTap={() => {
+          setSelectedTitle(title);
+          setDetailVisible(true);
+        }}
+        index={stackIndex}
+        total={stackTotal}
+      />
+    );
+  });
 
   const currentDeckItem = swipeDeck[currentIndex];
   const currentTitle = currentDeckItem?.kind === 'title' ? currentDeckItem.title : null;

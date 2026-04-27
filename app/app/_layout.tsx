@@ -8,6 +8,7 @@ import { useRouter } from 'expo-router';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { AuthProvider, useAuth } from '@/contexts/auth-context';
+import { ensureMobileAdsInitialized } from '@/lib/mobile-ads';
 
 export const unstable_settings = {
   // Don't set anchor - let auth state determine initial route
@@ -38,6 +39,10 @@ function InitialRouteHandler() {
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
+
+  useEffect(() => {
+    void ensureMobileAdsInitialized();
+  }, []);
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>

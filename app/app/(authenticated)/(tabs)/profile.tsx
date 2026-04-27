@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   TextInput,
   Text,
+  Linking,
 } from 'react-native';
 import { Link, useRouter } from 'expo-router';
 
@@ -83,8 +84,11 @@ export default function ProfileScreen() {
       await profileHelpers.updateProfile(user.id, {
         display_name: displayName.trim() || null,
       });
-    } catch {
-      Alert.alert('Error', 'Failed to save display name');
+    } catch (e) {
+      Alert.alert(
+        'Error',
+        e instanceof Error ? e.message : 'Failed to save display name'
+      );
     } finally {
       setSaving(false);
     }
@@ -153,6 +157,20 @@ export default function ProfileScreen() {
         },
       ]
     );
+  };
+
+  const openPrivacyPolicy = async () => {
+    const url = 'https://johnarmstrong117-vgapl.wordpress.com/privacypolicy/';
+    try {
+      const canOpen = await Linking.canOpenURL(url);
+      if (!canOpen) {
+        Alert.alert('Unable to open link', 'Could not open the privacy policy URL.');
+        return;
+      }
+      await Linking.openURL(url);
+    } catch {
+      Alert.alert('Unable to open link', 'Could not open the privacy policy URL.');
+    }
   };
 
   const confirmClearPassed = (type: 'movie' | 'tv') => {
@@ -304,6 +322,13 @@ export default function ProfileScreen() {
           activeOpacity={0.8}>
           <ThemedText style={styles.signOutText}>Sign Out</ThemedText>
         </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.privacyPolicyLink}
+          onPress={openPrivacyPolicy}
+          activeOpacity={0.8}>
+          <ThemedText style={styles.privacyPolicyText}>Privacy Policy</ThemedText>
+        </TouchableOpacity>
       </ScrollView>
     </ThemedView>
   );
@@ -435,6 +460,16 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  privacyPolicyLink: {
+    alignItems: 'center',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  privacyPolicyText: {
+    fontSize: 14,
+    opacity: 0.8,
+    textDecorationLine: 'underline',
   },
   resetButtonsRow: {
     flexDirection: 'row',

@@ -45,7 +45,7 @@ export default function InboxScreen() {
     if (!user) return;
     try {
       const [data, matches] = await Promise.all([
-        friendHelpers.getRecommendationsReceived(user.id),
+        friendHelpers.getRecommendationsReceived(),
         matchHelpers.getMatchesWithTitles(user.id),
       ]);
       setItems(data);
@@ -113,6 +113,24 @@ export default function InboxScreen() {
         }
         senderName={detailItem?.from_user_display_name ?? null}
         senderMessage={detailItem?.message ?? null}
+        inboxSafety={
+          detailItem
+            ? {
+                otherDisplayName: detailItem.from_user_display_name,
+                onReport: async (reasonCode, reasonDetail) => {
+                  await friendHelpers.reportRecommendation(detailItem.id, reasonCode, reasonDetail);
+                },
+                onBlock: async (reasonCode, reasonDetail) => {
+                  await friendHelpers.blockUser(detailItem.from_user_id, {
+                    reasonCode,
+                    reasonDetail,
+                    recommendationId: detailItem.id,
+                  });
+                  await load();
+                },
+              }
+            : undefined
+        }
         isInMyMatches={detailItem ? matchSet.has(`${detailItem.tmdb_id}-${detailItem.type}`) : false}
         onAddToMatches={
           detailItem && user

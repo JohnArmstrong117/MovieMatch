@@ -22,16 +22,13 @@ export default function TabLayout() {
     }, [refetch])
   );
 
-  if (!fontsLoaded) {
-    return null;
-  }
-
   return (
     <Tabs
       screenOptions={{
         tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
         headerShown: false,
         tabBarButton: HapticTab,
+        tabBarLabelStyle: fontsLoaded ? { fontFamily: 'Limelight' } : undefined,
       }}>
       <Tabs.Screen
         name="index"

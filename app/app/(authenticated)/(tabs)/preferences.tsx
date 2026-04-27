@@ -47,6 +47,15 @@ export default function PreferencesScreen() {
     );
   }, [streamingServices, providerSearchQuery]);
 
+  const orderedProviders = useMemo(() => {
+    return [...filteredProviders].sort((a, b) => {
+      const aSelected = userServices.includes(a.provider_id) ? 0 : 1;
+      const bSelected = userServices.includes(b.provider_id) ? 0 : 1;
+      if (aSelected !== bSelected) return aSelected - bSelected;
+      return a.provider_name.localeCompare(b.provider_name);
+    });
+  }, [filteredProviders, userServices]);
+
   useEffect(() => {
     if (user) {
       loadData();
@@ -96,6 +105,22 @@ export default function PreferencesScreen() {
     setUserGenreSlugs(prev =>
       prev.includes(slug) ? prev.filter(s => s !== slug) : [...prev, slug]
     );
+  };
+
+  const selectAllGenres = () => {
+    setUserGenreSlugs(UNIFIED_GENRES_SORTED.map((g) => g.slug));
+  };
+
+  const selectAllProviders = () => {
+    setUserServices(streamingServices.map((p) => p.provider_id));
+  };
+
+  const clearAllGenres = () => {
+    setUserGenreSlugs([]);
+  };
+
+  const clearAllProviders = () => {
+    setUserServices([]);
   };
 
   const handleSave = async () => {
@@ -189,9 +214,19 @@ export default function PreferencesScreen() {
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag">
       <ThemedView style={styles.section}>
-        <ThemedText type="subtitle" style={styles.sectionTitle}>
-          Favorite Genres
-        </ThemedText>
+        <View style={styles.sectionHeaderRow}>
+          <ThemedText type="subtitle" style={styles.sectionTitle}>
+            Favorite Genres
+          </ThemedText>
+          <View style={styles.sectionActionsRow}>
+            <TouchableOpacity style={styles.selectAllButton} onPress={selectAllGenres}>
+              <ThemedText style={styles.selectAllButtonText}>Select all</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.clearAllButton} onPress={clearAllGenres}>
+              <ThemedText style={styles.clearAllButtonText}>Clear all</ThemedText>
+            </TouchableOpacity>
+          </View>
+        </View>
         <ThemedText style={styles.sectionDescription}>
           One list for movies and TV — we map each choice to the right TMDB genres per medium.
         </ThemedText>
@@ -217,9 +252,19 @@ export default function PreferencesScreen() {
       </ThemedView>
 
       <ThemedView style={styles.section}>
-        <ThemedText type="subtitle" style={styles.sectionTitle}>
-          Streaming Services
-        </ThemedText>
+        <View style={styles.sectionHeaderRow}>
+          <ThemedText type="subtitle" style={styles.sectionTitle}>
+            Streaming Services
+          </ThemedText>
+          <View style={styles.sectionActionsRow}>
+            <TouchableOpacity style={styles.selectAllButton} onPress={selectAllProviders}>
+              <ThemedText style={styles.selectAllButtonText}>Select all</ThemedText>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.clearAllButton} onPress={clearAllProviders}>
+              <ThemedText style={styles.clearAllButtonText}>Clear all</ThemedText>
+            </TouchableOpacity>
+          </View>
+        </View>
         <ThemedText style={styles.sectionDescription}>
           Select the streaming services you subscribe to
         </ThemedText>
@@ -231,7 +276,7 @@ export default function PreferencesScreen() {
           onChangeText={setProviderSearchQuery}
         />
         <View style={styles.chipContainer}>
-          {filteredProviders.map(provider => {
+          {orderedProviders.map(provider => {
             const isSelected = userServices.includes(provider.provider_id);
             const logoUrl = provider.logo_path 
               ? `${TMDB_IMAGE_BASE_URL}${provider.logo_path}` 
@@ -324,8 +369,43 @@ const styles = StyleSheet.create({
   section: {
     marginBottom: 32,
   },
-  sectionTitle: {
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     marginBottom: 8,
+  },
+  sectionActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  sectionTitle: {
+    marginBottom: 0,
+  },
+  selectAllButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#ddd',
+  },
+  selectAllButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#c41010',
+  },
+  clearAllButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#ddd',
+  },
+  clearAllButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#666',
   },
   sectionDescription: {
     marginBottom: 16,

@@ -8,6 +8,7 @@ import {
   Modal,
   Pressable,
   TextInput,
+  Alert,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -53,9 +54,18 @@ export default function SharedWithFriendScreen() {
     if (!user || !friendId) return;
     setLoading(true);
     try {
+      const blocked = await friendHelpers.isBlockedWith(friendId);
+      if (blocked) {
+        Alert.alert('Unavailable', 'You can’t view this person’s shared list.', [
+          { text: 'OK', onPress: () => router.back() },
+        ]);
+        setMatches([]);
+        setFriendName('');
+        return;
+      }
       const [profile, shared] = await Promise.all([
         profileHelpers.getProfile(friendId),
-        friendHelpers.getSharedMatchesWithFriend(user.id, friendId),
+        friendHelpers.getSharedMatchesWithFriend(friendId),
       ]);
       setFriendName(profile?.display_name ?? 'Friend');
       setMatches(shared);
@@ -65,7 +75,7 @@ export default function SharedWithFriendScreen() {
     } finally {
       setLoading(false);
     }
-  }, [user, friendId]);
+  }, [user, friendId, router]);
 
   useEffect(() => {
     if (user && friendId) {
@@ -302,7 +312,9 @@ export default function SharedWithFriendScreen() {
           selectedMatch
             ? () => {
                 handleToggleWatched(selectedMatch.id, selectedMatch.watched, selectedMatch.tmdb_id, selectedMatch.type);
-                setSelectedMatch((prev) => (prev ? { ...prev, watched: !prev.watched } : null));
+                setSelectedMatch((prev: (typeof selectedMatch)) =>
+                  prev ? { ...prev, watched: !prev.watched } : null
+                );
               }
             : undefined
         }

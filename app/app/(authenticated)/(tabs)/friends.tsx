@@ -39,7 +39,7 @@ export default function FriendsScreen() {
     setLoading(true);
     try {
       const [friendsList, received, sent] = await Promise.all([
-        friendHelpers.getFriends(user.id),
+        friendHelpers.getFriends(),
         friendHelpers.getPendingReceived(user.id),
         friendHelpers.getPendingSent(user.id),
       ]);
@@ -68,7 +68,7 @@ export default function FriendsScreen() {
     const t = setTimeout(async () => {
       setSearching(true);
       try {
-        const results = await friendHelpers.searchByDisplayName(user.id, searchQuery.trim(), 15);
+        const results = await friendHelpers.searchByDisplayName(searchQuery.trim(), 15);
         setSearchResults(results);
       } catch {
         setSearchResults([]);

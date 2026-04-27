@@ -8,6 +8,7 @@ import {
   Alert,
   Share,
   TextInput,
+  Linking,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import * as Contacts from 'expo-contacts';
@@ -38,7 +39,7 @@ type ContactItem = {
 
 const INVITE_MESSAGE = "I'm using Meesh to discover movies and TV shows. Join me and we can share recommendations!";
 const INVITE_URL = 'https://apps.apple.com/app/flickswipe'; // Replace with your App Store / Play Store link or universal link
-
+const PRIVACY_POLICY_URL = 'https://johnarmstrong117-vgapl.wordpress.com/privacypolicy/';
 export default function ContactsScreen() {
   const { user } = useAuth();
   const router = useRouter();
@@ -70,14 +71,19 @@ export default function ContactsScreen() {
     return status;
   }, []);
 
+  const openPrivacyPolicy = useCallback(async () => {
+    try {
+      await Linking.openURL(PRIVACY_POLICY_URL);
+    } catch {
+      Alert.alert('Unable to open link', 'Could not open the privacy policy URL.');
+    }
+  }, []);
+
   const loadContacts = useCallback(async () => {
     if (!user) return;
     setLoading(true);
     try {
-      let status = await Contacts.getPermissionsAsync();
-      if (status.status !== 'granted') {
-        status = await requestPermission();
-      }
+      const status = await Contacts.getPermissionsAsync();
       setPermissionStatus(status.status);
       if (status.status !== 'granted') {
         setContacts([]);
@@ -140,7 +146,24 @@ export default function ContactsScreen() {
     } finally {
       setLoading(false);
     }
-  }, [user, requestPermission]);
+  }, [user]);
+
+  /**
+   * App Store Guideline 5.1.1(iv): do not show a custom dialog with Cancel before the system
+   * contacts permission — the user must proceed straight to the OS prompt from the primary action.
+   * Disclosure copy lives inline on this screen instead.
+   */
+  const handleAllowAccessPress = useCallback(async () => {
+    try {
+      const status = await requestPermission();
+      if (status === 'granted') {
+        await loadContacts();
+      }
+    } catch (e) {
+      console.error('Contacts permission flow failed:', e);
+      Alert.alert('Error', 'Could not request contacts access');
+    }
+  }, [loadContacts, requestPermission]);
 
   useFocusEffect(
     useCallback(() => {
@@ -194,14 +217,27 @@ export default function ContactsScreen() {
           <ThemedText style={styles.helper}>Loading…</ThemedText>
         </View>
       ) : permissionStatus !== 'granted' ? (
-        <View style={styles.centered}>
+        <ScrollView
+          style={styles.permissionScroll}
+          contentContainerStyle={styles.permissionScrollContent}
+          keyboardShouldPersistTaps="handled">
           <ThemedText style={styles.helper}>
             Allow access to your contacts to find friends on Meesh or invite them to join.
           </ThemedText>
-          <TouchableOpacity style={styles.primaryButton} onPress={requestPermission}>
+          <ThemedText style={styles.disclosureBlock}>
+            Contact details (emails and phone numbers) will be sent to our server to find friends already on
+            Meesh.
+          </ThemedText>
+          <ThemedText style={styles.disclosureBlock}>
+            We use this only for friend discovery and invites, not unrelated marketing.
+          </ThemedText>
+          <TouchableOpacity onPress={openPrivacyPolicy}>
+            <ThemedText style={styles.inlineLink}>View Privacy Policy</ThemedText>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.primaryButton} onPress={handleAllowAccessPress}>
             <ThemedText style={styles.primaryButtonText}>Allow access to contacts</ThemedText>
           </TouchableOpacity>
-        </View>
+        </ScrollView>
       ) : (
         <>
           {lookupLoading && (
@@ -298,6 +334,26 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: 24,
+  },
+  permissionScroll: {
+    flex: 1,
+  },
+  permissionScrollContent: {
+    padding: 24,
+    paddingBottom: 40,
+  },
+  disclosureBlock: {
+    marginTop: 14,
+    fontSize: 14,
+    lineHeight: 20,
+    opacity: 0.9,
+  },
+  inlineLink: {
+    marginTop: 16,
+    color: '#c41010',
+    fontWeight: '600',
+    textDecorationLine: 'underline',
+    fontSize: 15,
   },
   loaderRow: {
     flexDirection: 'row',

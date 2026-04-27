@@ -65,6 +65,15 @@ export default function RecommendToFriendScreen() {
     if (!user || !friendId) return;
     setLoading(true);
     try {
+      const blocked = await friendHelpers.isBlockedWith(friendId);
+      if (blocked) {
+        Alert.alert('Unavailable', 'You can’t recommend titles to this person.', [
+          { text: 'OK', onPress: () => router.back() },
+        ]);
+        setMatches([]);
+        setFriendName('');
+        return;
+      }
       await matchHelpers.syncFromSwipes(user.id);
       const [profile, myMatches, sent] = await Promise.all([
         profileHelpers.getProfile(friendId),
@@ -81,7 +90,7 @@ export default function RecommendToFriendScreen() {
     } finally {
       setLoading(false);
     }
-  }, [user, friendId]);
+  }, [user, friendId, router]);
 
   useEffect(() => {
     if (user && friendId) {
