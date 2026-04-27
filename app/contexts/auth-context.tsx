@@ -11,7 +11,13 @@ type AuthContextType = {
   loading: boolean;
   signIn: (email: string, password: string) => Promise<void>;
   /** Resolves with a session when the user is signed in immediately (no email confirmation). */
-  signUp: (email: string, password: string, name?: string, phone?: string) => Promise<Session | null>;
+  signUp: (
+    email: string,
+    password: string,
+    name?: string,
+    phone?: string,
+    termsVersion?: string
+  ) => Promise<Session | null>;
   signOut: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
 };
@@ -80,7 +86,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(data.user);
   };
 
-  const signUp = async (email: string, password: string, name?: string, phone?: string) => {
+  const signUp = async (
+    email: string,
+    password: string,
+    name?: string,
+    phone?: string,
+    termsVersion?: string
+  ) => {
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
@@ -96,12 +108,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSession(data.session);
     setUser(data.user ?? null);
 
-    if (data.user && phone && phone.replace(/\D/g, '').length > 0) {
-      const normalizedPhone = phone.replace(/\D/g, '');
-      await supabase
-        .from('profiles')
-        .update({ phone: normalizedPhone })
-        .eq('id', data.user.id);
+    if (data.user) {
+      const updatePayload: {
+        phone?: string;
+        terms_accepted_at?: string;
+        terms_version?: string;
+      } = {};
+
+      if (phone && phone.replace(/\D/g, '').length > 0) {
+        updatePayload.phone = phone.replace(/\D/g, '');
+      }
+      if (termsVersion) {
+        updatePayload.terms_accepted_at = new Date().toISOString();
+        updatePayload.terms_version = termsVersion;
+      }
+
+      if (Object.keys(updatePayload).length > 0) {
+        await supabase.from('profiles').update(updatePayload).eq('id', data.user.id);
+      }
     }
 
     return data.session ?? null;

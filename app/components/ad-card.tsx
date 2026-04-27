@@ -1,5 +1,6 @@
-import React from 'react';
-import { Dimensions, StyleSheet, TouchableOpacity, View } from 'react-native';
+import React, { useEffect } from 'react';
+import { StyleSheet, TouchableOpacity, View, useWindowDimensions } from 'react-native';
+import { Image } from 'expo-image';
 import Animated, {
   Extrapolate,
   interpolate,
@@ -20,12 +21,8 @@ import {
 
 import { ThemedText } from './themed-text';
 import { ThemedView } from './themed-view';
-
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
-const CARD_WIDTH = SCREEN_WIDTH - 40;
-const CARD_HEIGHT = CARD_WIDTH * 1.5;
-const SWIPE_THRESHOLD = 100;
-const SWIPE_UP_THRESHOLD = 80;
+import { getSwipeCardLayout } from '@/lib/swipe-card-layout';
+import { adsDiagLog } from '@/lib/ads-diagnostics';
 
 type AdCardProps = {
   nativeAd: NativeAd;
@@ -37,6 +34,20 @@ type AdCardProps = {
 };
 
 export function AdCard({ nativeAd, index, total, onSwipeLeft, onSwipeRight, onSwipeUp }: AdCardProps) {
+  useEffect(() => {
+    adsDiagLog('ad_card_mount', {
+      isTop: index === 0,
+      headlineLen: nativeAd.headline?.length ?? 0,
+      hasMedia: !!nativeAd.mediaContent,
+      responseId: nativeAd.responseId,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- log once per responseId + stack slot
+  }, [index, nativeAd.responseId]);
+
+  const { width: winW, height: winH } = useWindowDimensions();
+  const { cardWidth, cardHeight, screenWidth, screenHeight, swipeThreshold, swipeUpThreshold } =
+    getSwipeCardLayout(winW, winH);
+
   const translateX = useSharedValue(0);
   const translateY = useSharedValue(0);
   const scale = useSharedValue(1);
@@ -48,14 +59,20 @@ export function AdCard({ nativeAd, index, total, onSwipeLeft, onSwipeRight, onSw
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
   };
 
+  const primaryImageUrl = nativeAd.images?.[0]?.url ?? null;
+  const iconUrl = nativeAd.icon?.url ?? null;
+
   const panGesture = Gesture.Pan()
     .enabled(isTopCard)
+    // Let simple taps reach NativeAd assets (for click-through) and only capture true drags.
+    .activeOffsetX([-16, 16])
+    .activeOffsetY([-16, 16])
     .onUpdate((event) => {
       translateX.value = event.translationX;
       translateY.value = event.translationY;
       scale.value = interpolate(
         Math.abs(translateX.value),
-        [0, SCREEN_WIDTH / 2],
+        [0, screenWidth / 2],
         [1, 0.95],
         Extrapolate.CLAMP
       );
@@ -63,21 +80,21 @@ export function AdCard({ nativeAd, index, total, onSwipeLeft, onSwipeRight, onSw
     .onEnd((event) => {
       const tx = event.translationX;
       const ty = event.translationY;
-      const isSwipeUp = onSwipeUp && ty < -SWIPE_UP_THRESHOLD && Math.abs(ty) >= Math.abs(tx);
+      const isSwipeUp = onSwipeUp && ty < -swipeUpThreshold && Math.abs(ty) >= Math.abs(tx);
 
       if (isSwipeUp) {
         runOnJS(triggerHaptic)();
         runOnJS(onSwipeUp!)();
-        translateY.value = withSpring(-SCREEN_HEIGHT);
+        translateY.value = withSpring(-screenHeight);
         translateX.value = withSpring(0);
         scale.value = withSpring(0.9);
         opacity.value = withSpring(0);
-      } else if (Math.abs(tx) > SWIPE_THRESHOLD) {
+      } else if (Math.abs(tx) > swipeThreshold) {
         const direction = tx > 0 ? 'right' : 'left';
         runOnJS(triggerHaptic)();
         if (direction === 'right') runOnJS(onSwipeRight)();
         else runOnJS(onSwipeLeft)();
-        translateX.value = withSpring(direction === 'right' ? SCREEN_WIDTH : -SCREEN_WIDTH);
+        translateX.value = withSpring(direction === 'right' ? screenWidth : -screenWidth);
         translateY.value = withSpring(0);
         opacity.value = withSpring(0);
       } else {
@@ -87,10 +104,14 @@ export function AdCard({ nativeAd, index, total, onSwipeLeft, onSwipeRight, onSw
       }
     });
 
+  // Let native ad assets (CTA/media/headline) receive taps while pan handles true drags.
+  const nativeGesture = Gesture.Native();
+  const composedGesture = Gesture.Race(panGesture, nativeGesture);
+
   const animatedCardStyle = useAnimatedStyle(() => {
     const rotation = interpolate(
       translateX.value,
-      [-SCREEN_WIDTH / 2, 0, SCREEN_WIDTH / 2],
+      [-screenWidth / 2, 0, screenWidth / 2],
       [-15, 0, 15],
       Extrapolate.CLAMP
     );
@@ -107,8 +128,8 @@ export function AdCard({ nativeAd, index, total, onSwipeLeft, onSwipeRight, onSw
   });
 
   return (
-    <GestureDetector gesture={panGesture}>
-      <Animated.View style={[styles.card, animatedCardStyle]}>
+    <GestureDetector gesture={composedGesture}>
+      <Animated.View style={[styles.card, { width: cardWidth, height: cardHeight }, animatedCardStyle]}>
         <ThemedView style={styles.cardContent}>
           <NativeAdView nativeAd={nativeAd} style={styles.nativeAdWrap}>
             {(nativeAd.advertiser ?? nativeAd.store) ? (
@@ -140,7 +161,21 @@ export function AdCard({ nativeAd, index, total, onSwipeLeft, onSwipeRight, onSw
             </NativeAsset>
 
             <View style={styles.mediaWrap}>
-              <NativeMediaView style={styles.media} />
+              {nativeAd.mediaContent ? (
+                <NativeMediaView style={styles.media} resizeMode="cover" />
+              ) : primaryImageUrl ? (
+                <NativeAsset assetType={NativeAssetType.IMAGE}>
+                  <Image source={{ uri: primaryImageUrl }} style={styles.media} contentFit="cover" />
+                </NativeAsset>
+              ) : iconUrl ? (
+                <NativeAsset assetType={NativeAssetType.ICON}>
+                  <Image source={{ uri: iconUrl }} style={styles.media} contentFit="cover" />
+                </NativeAsset>
+              ) : (
+                <View style={styles.mediaPlaceholder}>
+                  <ThemedText style={styles.mediaPlaceholderText}>Sponsored</ThemedText>
+                </View>
+              )}
             </View>
 
             <NativeAsset assetType={NativeAssetType.BODY}>
@@ -150,11 +185,11 @@ export function AdCard({ nativeAd, index, total, onSwipeLeft, onSwipeRight, onSw
             </NativeAsset>
 
             <NativeAsset assetType={NativeAssetType.CALL_TO_ACTION}>
-              <TouchableOpacity style={styles.ctaButton} activeOpacity={0.85}>
+              <View style={styles.ctaButton}>
                 <ThemedText style={styles.ctaText}>
                   {nativeAd.callToAction || 'Learn more'}
                 </ThemedText>
-              </TouchableOpacity>
+              </View>
             </NativeAsset>
 
             <ThemedText style={styles.sponsoredText}>Sponsored</ThemedText>
@@ -168,19 +203,19 @@ export function AdCard({ nativeAd, index, total, onSwipeLeft, onSwipeRight, onSw
 const styles = StyleSheet.create({
   card: {
     position: 'absolute',
-    width: CARD_WIDTH,
-    height: CARD_HEIGHT,
     alignSelf: 'center',
   },
   cardContent: {
     flex: 1,
     borderRadius: 20,
     overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.22)',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 8,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    elevation: 10,
   },
   nativeAdWrap: {
     flex: 1,
@@ -218,6 +253,17 @@ const styles = StyleSheet.create({
   media: {
     width: '100%',
     height: '100%',
+  },
+  mediaPlaceholder: {
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.08)',
+  },
+  mediaPlaceholderText: {
+    fontSize: 13,
+    opacity: 0.6,
   },
   body: {
     fontSize: 14,

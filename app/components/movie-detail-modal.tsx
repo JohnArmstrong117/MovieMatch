@@ -18,6 +18,7 @@ import { useAuth } from '@/contexts/auth-context';
 import { useThemeColor } from '@/hooks/use-theme-color';
 import { streamingServiceHelpers, friendHelpers } from '@/lib/db-helpers';
 import type { TMDBProvider, FriendWithProfile } from '@/lib/db-helpers';
+import { SAFETY_REASON_OPTIONS } from '@/lib/safety-reasons';
 import { ThemedText } from './themed-text';
 import { ThemedView } from './themed-view';
 
@@ -61,6 +62,12 @@ interface MovieDetailModalProps {
   /** When viewing a recommendation: sender display name and optional message */
   senderName?: string | null;
   senderMessage?: string | null;
+  /** Inbox: report message and/or block sender (reason picker + server moderation row). */
+  inboxSafety?: {
+    otherDisplayName: string | null;
+    onReport: (reasonCode: string, reasonDetail: string | null) => Promise<void>;
+    onBlock: (reasonCode: string, reasonDetail: string | null) => Promise<void>;
+  } | null;
   /** If provided and item is in matches (matchId set), show "Remove from my matches" at bottom */
   onRemoveFromMatches?: () => void | Promise<void>;
 }
@@ -78,6 +85,7 @@ export function MovieDetailModal({
   isInMyMatches = false,
   senderName,
   senderMessage,
+  inboxSafety = null,
   onRemoveFromMatches,
 }: MovieDetailModalProps) {
   const { user } = useAuth();
@@ -108,6 +116,21 @@ export function MovieDetailModal({
   const [selectedFriendIds, setSelectedFriendIds] = useState<Set<string>>(new Set());
   const [recommendMessage, setRecommendMessage] = useState('');
   const [recommendSending, setRecommendSending] = useState(false);
+  const [safetyModalOpen, setSafetyModalOpen] = useState(false);
+  const [safetyMode, setSafetyMode] = useState<'report' | 'block' | null>(null);
+  const [selectedReasonCode, setSelectedReasonCode] = useState<string | null>(null);
+  const [otherReasonText, setOtherReasonText] = useState('');
+  const [safetySubmitting, setSafetySubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!visible) {
+      setSafetyModalOpen(false);
+      setSafetyMode(null);
+      setSelectedReasonCode(null);
+      setOtherReasonText('');
+      setSafetySubmitting(false);
+    }
+  }, [visible]);
 
   useEffect(() => {
     if (!visible || !item) {
@@ -165,7 +188,7 @@ export function MovieDetailModal({
     let cancelled = false;
     setFriendsLoading(true);
     setFriendsList([]);
-    friendHelpers.getFriends(user.id).then((list: FriendWithProfile[]) => {
+    friendHelpers.getFriends().then((list: FriendWithProfile[]) => {
       if (!cancelled) {
         setFriendsList(list);
         setFriendsLoading(false);
@@ -265,6 +288,42 @@ export function MovieDetailModal({
     return () => { cancelled = true; };
   }, [visible, user?.id, loadingProviders, providers.length]);
 
+  const openSafetyReasonModal = (mode: 'report' | 'block') => {
+    setSafetyMode(mode);
+    setSelectedReasonCode(null);
+    setOtherReasonText('');
+    setSafetyModalOpen(true);
+  };
+
+  const submitSafetyReason = async () => {
+    if (!inboxSafety || !safetyMode || !selectedReasonCode) return;
+    const detail =
+      selectedReasonCode === 'other' ? (otherReasonText.trim() || null) : null;
+    if (selectedReasonCode === 'other' && !detail) {
+      Alert.alert('Describe the issue', 'Please add a short description for “Something else”.');
+      return;
+    }
+    setSafetySubmitting(true);
+    try {
+      if (safetyMode === 'report') {
+        await inboxSafety.onReport(selectedReasonCode, detail);
+        Alert.alert('Thanks', 'We received your report.');
+      } else {
+        await inboxSafety.onBlock(selectedReasonCode, detail);
+        Alert.alert('Blocked', 'You will not see recommendations from this person, and you cannot interact.');
+        onClose();
+      }
+      setSafetyModalOpen(false);
+      setSafetyMode(null);
+      setSelectedReasonCode(null);
+      setOtherReasonText('');
+    } catch (e) {
+      Alert.alert('Error', (e as Error)?.message ?? 'Something went wrong');
+    } finally {
+      setSafetySubmitting(false);
+    }
+  };
+
   if (!item) return null;
 
   const posterUrl = item.poster_path
@@ -329,6 +388,33 @@ export function MovieDetailModal({
                     {senderName ? `Message from ${senderName}` : 'Message'}
                   </ThemedText>
                   <ThemedText style={styles.senderMessageText}>{senderMessage}</ThemedText>
+                </View>
+              )}
+              {inboxSafety && (
+                <View style={styles.inboxSafetySection}>
+                  <ThemedText style={styles.sectionLabel}>Safety</ThemedText>
+                  <TouchableOpacity
+                    style={styles.inboxSafetyButton}
+                    onPress={() => openSafetyReasonModal('report')}
+                    activeOpacity={0.7}>
+                    <ThemedText style={styles.inboxSafetyButtonText}>Report message</ThemedText>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.inboxSafetyButton, styles.inboxSafetyButtonDanger]}
+                    onPress={() => {
+                      const name = inboxSafety.otherDisplayName?.trim() || 'this person';
+                      Alert.alert(
+                        'Block user?',
+                        `Block ${name}? You will not see each other’s recommendations, and you cannot send friend requests or recommendations to each other. We log this for moderation.`,
+                        [
+                          { text: 'Cancel', style: 'cancel' },
+                          { text: 'Choose reason', onPress: () => openSafetyReasonModal('block') },
+                        ]
+                      );
+                    }}
+                    activeOpacity={0.7}>
+                    <ThemedText style={styles.inboxSafetyButtonTextDanger}>Block user</ThemedText>
+                  </TouchableOpacity>
                 </View>
               )}
               {item.original_title && item.original_title !== item.title && (
@@ -646,6 +732,80 @@ export function MovieDetailModal({
                 </TouchableOpacity>
               </ScrollView>
             )}
+          </ThemedView>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={safetyModalOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (!safetySubmitting) setSafetyModalOpen(false);
+        }}>
+        <View style={styles.safetyBackdrop}>
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => {
+              if (!safetySubmitting) setSafetyModalOpen(false);
+            }}
+          />
+          <ThemedView style={styles.safetySheet} onStartShouldSetResponder={() => true}>
+            <ThemedText type="subtitle" style={styles.safetyTitle}>
+              {safetyMode === 'block' ? 'Why are you blocking?' : 'Why are you reporting?'}
+            </ThemedText>
+            <ScrollView
+              style={styles.safetyScroll}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}>
+              {SAFETY_REASON_OPTIONS.map((opt) => {
+                const selected = selectedReasonCode === opt.code;
+                return (
+                  <TouchableOpacity
+                    key={opt.code}
+                    style={[styles.safetyReasonRow, selected && styles.safetyReasonRowSelected]}
+                    onPress={() => setSelectedReasonCode(opt.code)}
+                    disabled={safetySubmitting}>
+                    <ThemedText style={styles.safetyReasonLabel}>{opt.label}</ThemedText>
+                  </TouchableOpacity>
+                );
+              })}
+              {selectedReasonCode === 'other' && (
+                <TextInput
+                  style={[
+                    styles.safetyOtherInput,
+                    { backgroundColor: recommendInputBg, borderColor: recommendInputBorder, color: recommendInputText },
+                  ]}
+                  placeholder="Brief details"
+                  placeholderTextColor="#888"
+                  value={otherReasonText}
+                  onChangeText={setOtherReasonText}
+                  multiline
+                  maxLength={500}
+                  editable={!safetySubmitting}
+                />
+              )}
+            </ScrollView>
+            <View style={styles.safetyActions}>
+              <TouchableOpacity
+                style={styles.safetyCancelBtn}
+                onPress={() => !safetySubmitting && setSafetyModalOpen(false)}>
+                <ThemedText style={styles.safetyCancelBtnText}>Cancel</ThemedText>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.safetySubmitBtn,
+                  (!selectedReasonCode || safetySubmitting) && styles.safetySubmitBtnDisabled,
+                ]}
+                onPress={submitSafetyReason}
+                disabled={!selectedReasonCode || safetySubmitting}>
+                {safetySubmitting ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <ThemedText style={styles.safetySubmitBtnText}>Submit</ThemedText>
+                )}
+              </TouchableOpacity>
+            </View>
           </ThemedView>
         </View>
       </Modal>
@@ -994,6 +1154,108 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 22,
     opacity: 0.95,
+  },
+  inboxSafetySection: {
+    marginTop: 8,
+    marginBottom: 16,
+    paddingTop: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(0,0,0,0.12)',
+  },
+  inboxSafetyButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 4,
+    marginTop: 8,
+  },
+  inboxSafetyButtonDanger: {
+    marginTop: 4,
+  },
+  inboxSafetyButtonText: {
+    fontSize: 16,
+    color: '#1a6bcc',
+    fontWeight: '600',
+  },
+  inboxSafetyButtonTextDanger: {
+    fontSize: 16,
+    color: '#c41010',
+    fontWeight: '600',
+  },
+  safetyBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  safetySheet: {
+    borderRadius: 14,
+    padding: 16,
+    maxHeight: '80%',
+  },
+  safetyTitle: {
+    marginBottom: 12,
+  },
+  safetyScroll: {
+    maxHeight: 320,
+  },
+  safetyReasonRow: {
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    marginBottom: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.1)',
+  },
+  safetyReasonRowSelected: {
+    borderColor: '#1a6bcc',
+    backgroundColor: 'rgba(26, 107, 204, 0.08)',
+  },
+  safetyReasonLabel: {
+    fontSize: 16,
+  },
+  safetyOtherInput: {
+    minHeight: 72,
+    marginTop: 8,
+    marginBottom: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    fontSize: 15,
+    textAlignVertical: 'top',
+  },
+  safetyActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    marginTop: 12,
+    paddingTop: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(0,0,0,0.1)',
+  },
+  safetyCancelBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+  },
+  safetyCancelBtnText: {
+    fontSize: 16,
+    opacity: 0.85,
+  },
+  safetySubmitBtn: {
+    marginLeft: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    backgroundColor: '#c41010',
+    minWidth: 100,
+    alignItems: 'center',
+  },
+  safetySubmitBtnDisabled: {
+    opacity: 0.5,
+  },
+  safetySubmitBtnText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
   },
   sectionLabel: {
     fontSize: 14,

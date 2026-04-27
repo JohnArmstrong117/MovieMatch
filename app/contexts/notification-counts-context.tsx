@@ -34,7 +34,7 @@ export function NotificationCountsProvider({
     try {
       const since = await AsyncStorage.getItem(INBOX_LAST_OPENED_KEY);
       const [unread, pending] = await Promise.all([
-        friendHelpers.getRecommendationsReceivedUnreadCount(userId, since ?? null),
+        friendHelpers.getRecommendationsReceivedUnreadCount(since ?? null),
         friendHelpers.getPendingReceivedCount(userId),
       ]);
       setUnreadRecommendationsCount(unread);

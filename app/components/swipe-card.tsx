@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, View, Dimensions } from 'react-native';
+import { StyleSheet, View, useWindowDimensions } from 'react-native';
 import { Image } from 'expo-image';
 import Animated, {
   useSharedValue,
@@ -15,12 +15,7 @@ import * as Haptics from 'expo-haptics';
 import { ThemedText } from './themed-text';
 import { ThemedView } from './themed-view';
 import type { MockTitle } from '@/lib/mock-tmdb';
-
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
-const CARD_WIDTH = SCREEN_WIDTH - 40;
-const CARD_HEIGHT = CARD_WIDTH * 1.5;
-const SWIPE_THRESHOLD = 100;
-const SWIPE_UP_THRESHOLD = 80;
+import { getSwipeCardLayout } from '@/lib/swipe-card-layout';
 
 interface SwipeCardProps {
   title: MockTitle;
@@ -36,6 +31,10 @@ interface SwipeCardProps {
 }
 
 export function SwipeCard({ title, onSwipeLeft, onSwipeRight, onSwipeUp, onDoubleTap, index, total, genreNames }: SwipeCardProps) {
+  const { width: winW, height: winH } = useWindowDimensions();
+  const { cardWidth, cardHeight, screenWidth, screenHeight, swipeThreshold, swipeUpThreshold } =
+    getSwipeCardLayout(winW, winH);
+
   const translateX = useSharedValue(0);
   const translateY = useSharedValue(0);
   const scale = useSharedValue(1);
@@ -78,13 +77,13 @@ export function SwipeCard({ title, onSwipeLeft, onSwipeRight, onSwipeUp, onDoubl
 
       const rotation = interpolate(
         translateX.value,
-        [-SCREEN_WIDTH / 2, 0, SCREEN_WIDTH / 2],
+        [-screenWidth / 2, 0, screenWidth / 2],
         [-15, 0, 15],
         Extrapolate.CLAMP
       );
       scale.value = interpolate(
         Math.abs(translateX.value),
-        [0, SCREEN_WIDTH / 2],
+        [0, screenWidth / 2],
         [1, 0.95],
         Extrapolate.CLAMP
       );
@@ -94,17 +93,17 @@ export function SwipeCard({ title, onSwipeLeft, onSwipeRight, onSwipeUp, onDoubl
       const translationY = event.translationY;
       const isSwipeUp =
         onSwipeUp &&
-        translationY < -SWIPE_UP_THRESHOLD &&
+        translationY < -swipeUpThreshold &&
         Math.abs(translationY) >= Math.abs(translationX);
 
       if (isSwipeUp) {
         runOnJS(triggerHaptic)();
         runOnJS(triggerSwipeUp)();
-        translateY.value = withSpring(-SCREEN_HEIGHT);
+        translateY.value = withSpring(-screenHeight);
         translateX.value = withSpring(0);
         scale.value = withSpring(0.9);
         opacity.value = withSpring(0);
-      } else if (Math.abs(translationX) > SWIPE_THRESHOLD) {
+      } else if (Math.abs(translationX) > swipeThreshold) {
         const direction = translationX > 0 ? 'right' : 'left';
         runOnJS(triggerHaptic)();
         if (direction === 'right') {
@@ -112,7 +111,7 @@ export function SwipeCard({ title, onSwipeLeft, onSwipeRight, onSwipeUp, onDoubl
         } else {
           runOnJS(triggerSwipeLeft)();
         }
-        translateX.value = withSpring(direction === 'right' ? SCREEN_WIDTH : -SCREEN_WIDTH);
+        translateX.value = withSpring(direction === 'right' ? screenWidth : -screenWidth);
         translateY.value = withSpring(0);
         opacity.value = withSpring(0);
       } else {
@@ -127,7 +126,7 @@ export function SwipeCard({ title, onSwipeLeft, onSwipeRight, onSwipeUp, onDoubl
   const animatedCardStyle = useAnimatedStyle(() => {
     const rotation = interpolate(
       translateX.value,
-      [-SCREEN_WIDTH / 2, 0, SCREEN_WIDTH / 2],
+      [-screenWidth / 2, 0, screenWidth / 2],
       [-15, 0, 15],
       Extrapolate.CLAMP
     );
@@ -147,7 +146,7 @@ export function SwipeCard({ title, onSwipeLeft, onSwipeRight, onSwipeUp, onDoubl
   const leftOverlayStyle = useAnimatedStyle(() => {
     const opacity = interpolate(
       translateX.value,
-      [-SCREEN_WIDTH / 2, -SWIPE_THRESHOLD, 0],
+      [-screenWidth / 2, -swipeThreshold, 0],
       [1, 0.5, 0],
       Extrapolate.CLAMP
     );
@@ -157,7 +156,7 @@ export function SwipeCard({ title, onSwipeLeft, onSwipeRight, onSwipeUp, onDoubl
   const rightOverlayStyle = useAnimatedStyle(() => {
     const opacity = interpolate(
       translateX.value,
-      [0, SWIPE_THRESHOLD, SCREEN_WIDTH / 2],
+      [0, swipeThreshold, screenWidth / 2],
       [0, 0.5, 1],
       Extrapolate.CLAMP
     );
@@ -168,7 +167,7 @@ export function SwipeCard({ title, onSwipeLeft, onSwipeRight, onSwipeUp, onDoubl
     // Input range must be increasing: rest (0) -> up (-threshold) -> far up
     const opacity = interpolate(
       translateY.value,
-      [-SCREEN_HEIGHT / 3, -SWIPE_UP_THRESHOLD, 0],
+      [-screenHeight / 3, -swipeUpThreshold, 0],
       [1, 0.5, 0],
       Extrapolate.CLAMP
     );
@@ -181,7 +180,7 @@ export function SwipeCard({ title, onSwipeLeft, onSwipeRight, onSwipeUp, onDoubl
 
   return (
     <GestureDetector gesture={composedGesture}>
-      <Animated.View style={[styles.card, animatedCardStyle]}>
+      <Animated.View style={[styles.card, { width: cardWidth, height: cardHeight }, animatedCardStyle]}>
         {/* Card content */}
         <ThemedView style={styles.cardContent}>
           {posterUrl ? (
@@ -256,8 +255,6 @@ export function SwipeCard({ title, onSwipeLeft, onSwipeRight, onSwipeUp, onDoubl
 const styles = StyleSheet.create({
   card: {
     position: 'absolute',
-    width: CARD_WIDTH,
-    height: CARD_HEIGHT,
     alignSelf: 'center',
   },
   cardContent: {
