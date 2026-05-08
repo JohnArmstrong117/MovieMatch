@@ -357,6 +357,41 @@ export interface Database {
           message?: string | null
         }
       }
+      push_notification_tokens: {
+        Row: {
+          id: string
+          user_id: string
+          expo_push_token: string
+          platform: 'ios' | 'android'
+          device_label: string | null
+          enabled: boolean
+          created_at: string
+          updated_at: string
+          last_seen_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          expo_push_token: string
+          platform: 'ios' | 'android'
+          device_label?: string | null
+          enabled?: boolean
+          created_at?: string
+          updated_at?: string
+          last_seen_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          expo_push_token?: string
+          platform?: 'ios' | 'android'
+          device_label?: string | null
+          enabled?: boolean
+          created_at?: string
+          updated_at?: string
+          last_seen_at?: string
+        }
+      }
       user_unified_genres: {
         Row: {
           user_id: string

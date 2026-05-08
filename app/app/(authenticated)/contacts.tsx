@@ -38,7 +38,8 @@ type ContactItem = {
 };
 
 const INVITE_MESSAGE = "I'm using Meesh to discover movies and TV shows. Join me and we can share recommendations!";
-const INVITE_URL = 'https://apps.apple.com/app/flickswipe'; // Replace with your App Store / Play Store link or universal link
+/** Meesh iOS App Store. When a Play Store URL exists, you can branch in handleInvite by Platform. */
+const INVITE_URL = 'https://apps.apple.com/us/app/meesh-movie-matching/id6762162819';
 const PRIVACY_POLICY_URL = 'https://johnarmstrong117-vgapl.wordpress.com/privacypolicy/';
 export default function ContactsScreen() {
   const { user } = useAuth();

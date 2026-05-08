@@ -2,7 +2,7 @@
   "expo": {
     "name": "Meesh",
     "slug": "app",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "orientation": "portrait",
     "icon": "./assets/images/Meesh_icon_1024.png",
     "scheme": "app",
@@ -52,6 +52,13 @@
         "expo-contacts",
         {
           "contactsPermission": "Allow Meesh to access your contacts to find friends and invite them to the app."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/Meesh_icon_1024.png",
+          "color": "#c41010"
         }
       ],
       [

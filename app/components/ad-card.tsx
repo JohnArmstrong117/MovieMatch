@@ -209,6 +209,7 @@ const styles = StyleSheet.create({
     flex: 1,
     borderRadius: 20,
     overflow: 'hidden',
+    backgroundColor: '#f2f2f2',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.22)',
     shadowColor: '#000',

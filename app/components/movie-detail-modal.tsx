@@ -11,7 +11,12 @@ import {
   Pressable,
   TextInput,
   Alert,
+  Keyboard,
+  Platform,
+  useWindowDimensions,
+  InputAccessoryView,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Image as ExpoImage } from 'expo-image';
 import { getSupabaseUrl, getSupabaseAnonKey } from '@/lib/supabase';
 import { useAuth } from '@/contexts/auth-context';
@@ -23,6 +28,8 @@ import { ThemedText } from './themed-text';
 import { ThemedView } from './themed-view';
 
 const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p';
+
+const RECOMMEND_MESSAGE_INPUT_ACCESSORY = 'recommendMessageInputAccessory';
 
 export interface MovieDetailItem {
   tmdb_id: number;
@@ -89,6 +96,8 @@ export function MovieDetailModal({
   onRemoveFromMatches,
 }: MovieDetailModalProps) {
   const { user } = useAuth();
+  const { height: windowHeight } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const watchedButtonBorderColor = useThemeColor(
     { light: 'rgba(0,0,0,0.18)', dark: 'rgba(255,255,255,0.9)' },
     'text'
@@ -116,6 +125,8 @@ export function MovieDetailModal({
   const [selectedFriendIds, setSelectedFriendIds] = useState<Set<string>>(new Set());
   const [recommendMessage, setRecommendMessage] = useState('');
   const [recommendSending, setRecommendSending] = useState(false);
+  /** Push recommend sheet above keyboard when typing message */
+  const [recommendKeyboardHeight, setRecommendKeyboardHeight] = useState(0);
   const [safetyModalOpen, setSafetyModalOpen] = useState(false);
   const [safetyMode, setSafetyMode] = useState<'report' | 'block' | null>(null);
   const [selectedReasonCode, setSelectedReasonCode] = useState<string | null>(null);
@@ -199,7 +210,27 @@ export function MovieDetailModal({
     return () => { cancelled = true; };
   }, [recommendModalOpen, user]);
 
+  useEffect(() => {
+    if (!recommendModalOpen) {
+      setRecommendKeyboardHeight(0);
+      return;
+    }
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const onShow = (e: { endCoordinates: { height: number } }) => {
+      setRecommendKeyboardHeight(e.endCoordinates.height);
+    };
+    const onHide = () => setRecommendKeyboardHeight(0);
+    const showSub = Keyboard.addListener(showEvent, onShow);
+    const hideSub = Keyboard.addListener(hideEvent, onHide);
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, [recommendModalOpen]);
+
   const toggleFriendSelected = (friendId: string) => {
+    Keyboard.dismiss();
     setSelectedFriendIds((prev) => {
       const next = new Set(prev);
       if (next.has(friendId)) next.delete(friendId);
@@ -210,6 +241,7 @@ export function MovieDetailModal({
 
   const allSelected = friendsList.length > 0 && selectedFriendIds.size === friendsList.length;
   const toggleSelectAll = () => {
+    Keyboard.dismiss();
     if (allSelected) {
       setSelectedFriendIds(new Set());
     } else {
@@ -218,6 +250,7 @@ export function MovieDetailModal({
   };
 
   const handleSendRecommendations = async () => {
+    Keyboard.dismiss();
     if (!user || !item || selectedFriendIds.size === 0) return;
     const trimmedMessage = recommendMessage.trim() || undefined;
     setRecommendSending(true);
@@ -646,91 +679,164 @@ export function MovieDetailModal({
         transparent
         animationType="slide"
         onRequestClose={() => setRecommendModalOpen(false)}>
-        <Pressable style={styles.recommendBackdrop} onPress={() => setRecommendModalOpen(false)} />
-        <View style={styles.recommendModalContent}>
-          <ThemedView style={styles.recommendModalInner}>
+        <Pressable
+          style={styles.recommendBackdrop}
+          onPress={() => {
+            Keyboard.dismiss();
+            setRecommendModalOpen(false);
+          }}
+        />
+        <View
+          style={[
+            styles.recommendModalContent,
+            { marginBottom: recommendKeyboardHeight },
+          ]}>
+          <ThemedView
+            style={[
+              styles.recommendModalInner,
+              { paddingBottom: Math.max(insets.bottom, 12) },
+            ]}>
             <View style={styles.recommendModalHeader}>
-              <ThemedText type="title" style={styles.recommendModalTitle}>
-                Recommend to friends
-              </ThemedText>
-              <TouchableOpacity onPress={() => setRecommendModalOpen(false)}>
+              <Pressable style={styles.recommendModalTitlePress} onPress={Keyboard.dismiss}>
+                <ThemedText type="title" style={styles.recommendModalTitle}>
+                  Recommend to friends
+                </ThemedText>
+              </Pressable>
+              <TouchableOpacity
+                onPress={() => {
+                  Keyboard.dismiss();
+                  setRecommendModalOpen(false);
+                }}>
                 <ThemedText style={styles.modalDoneText}>Cancel</ThemedText>
               </TouchableOpacity>
             </View>
+            {Platform.OS === 'ios' ? (
+              <InputAccessoryView nativeID={RECOMMEND_MESSAGE_INPUT_ACCESSORY}>
+                <View style={styles.recommendInputAccessory}>
+                  <TouchableOpacity
+                    style={styles.recommendInputAccessoryDoneBtn}
+                    onPress={Keyboard.dismiss}
+                    hitSlop={{ top: 12, bottom: 12, left: 16, right: 16 }}>
+                    <ThemedText style={styles.recommendInputAccessoryDoneText}>Done</ThemedText>
+                  </TouchableOpacity>
+                </View>
+              </InputAccessoryView>
+            ) : null}
             {item && (
-              <ScrollView
-                style={styles.recommendModalScroll}
-                contentContainerStyle={styles.recommendModalBody}
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator>
-                <ThemedText style={styles.recommendItemTitle}>{item.title ?? 'Unknown Title'}</ThemedText>
-                <ThemedText style={styles.recommendModalLabel}>Select friends</ThemedText>
-                {friendsLoading ? (
-                  <ActivityIndicator size="small" style={styles.recommendFriendsLoader} />
-                ) : friendsList.length === 0 ? (
-                  <ThemedText style={styles.recommendEmptyText}>No friends yet. Add friends to recommend.</ThemedText>
-                ) : (
-                  <>
-                    <TouchableOpacity
-                      style={[styles.recommendSelectAllRow, allSelected && styles.recommendFriendRowSelected]}
-                      onPress={toggleSelectAll}
-                      activeOpacity={0.7}>
-                      <View style={[styles.recommendCheckbox, allSelected && styles.recommendCheckboxSelected]}>
-                        {allSelected && <ThemedText style={styles.recommendCheckmark}>✓</ThemedText>}
-                      </View>
-                      <ThemedText style={styles.recommendSelectAllText}>
-                        {allSelected ? 'Deselect all' : 'Select all'}
+              <>
+                <View style={styles.recommendTopBlock}>
+                  <Pressable onPress={Keyboard.dismiss}>
+                    <ThemedText style={styles.recommendItemTitle}>{item.title ?? 'Unknown Title'}</ThemedText>
+                    <ThemedText style={styles.recommendModalLabel}>Select friends</ThemedText>
+                  </Pressable>
+                  {friendsLoading ? (
+                    <Pressable onPress={Keyboard.dismiss}>
+                      <ActivityIndicator size="small" style={styles.recommendFriendsLoader} />
+                    </Pressable>
+                  ) : friendsList.length === 0 ? (
+                    <Pressable onPress={Keyboard.dismiss}>
+                      <ThemedText style={styles.recommendEmptyText}>
+                        No friends yet. Add friends to recommend.
                       </ThemedText>
-                    </TouchableOpacity>
-                  <View style={styles.recommendFriendList}>
-                    {friendsList.map((friend) => {
-                      const isSelected = selectedFriendIds.has(friend.id);
-                      return (
-                        <TouchableOpacity
-                          key={friend.id}
-                          style={[styles.recommendFriendRow, isSelected && styles.recommendFriendRowSelected]}
-                          onPress={() => toggleFriendSelected(friend.id)}
-                          activeOpacity={0.7}>
-                          <View style={[styles.recommendCheckbox, isSelected && styles.recommendCheckboxSelected]}>
-                            {isSelected && <ThemedText style={styles.recommendCheckmark}>✓</ThemedText>}
-                          </View>
-                          <ThemedText style={styles.recommendFriendName} numberOfLines={1}>
-                            {friend.display_name || 'Friend'}
-                          </ThemedText>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                  </>
-                )}
-                <ThemedText style={[styles.recommendModalLabel, styles.recommendMessageLabel]}>Add a short message (optional)</ThemedText>
-                <TextInput
-                  style={[
-                    styles.recommendMessageInput,
-                    { backgroundColor: recommendInputBg, borderColor: recommendInputBorder, color: recommendInputText },
-                  ]}
-                  placeholder="e.g. You'll love this one!"
-                  placeholderTextColor="#888"
-                  value={recommendMessage}
-                  onChangeText={setRecommendMessage}
-                  multiline
-                  maxLength={300}
-                  editable={!recommendSending}
-                />
-                <ThemedText style={styles.recommendMessageHint}>{recommendMessage.length}/300</ThemedText>
-                <TouchableOpacity
-                  style={[styles.recommendSendButton, (selectedFriendIds.size === 0 || recommendSending) && styles.recommendSendButtonDisabled]}
-                  onPress={handleSendRecommendations}
-                  disabled={selectedFriendIds.size === 0 || recommendSending}>
-                  {recommendSending ? (
-                    <ActivityIndicator size="small" color="#fff" />
+                    </Pressable>
                   ) : (
-                    <ThemedText style={styles.recommendSendButtonText}>
-                      Send to {selectedFriendIds.size} friend{selectedFriendIds.size === 1 ? '' : 's'}
-                    </ThemedText>
+                    <>
+                      <TouchableOpacity
+                        style={[styles.recommendSelectAllRow, allSelected && styles.recommendFriendRowSelected]}
+                        onPress={toggleSelectAll}
+                        activeOpacity={0.7}>
+                        <View style={[styles.recommendCheckbox, allSelected && styles.recommendCheckboxSelected]}>
+                          {allSelected && <ThemedText style={styles.recommendCheckmark}>✓</ThemedText>}
+                        </View>
+                        <ThemedText style={styles.recommendSelectAllText}>
+                          {allSelected ? 'Deselect all' : 'Select all'}
+                        </ThemedText>
+                      </TouchableOpacity>
+                      <ScrollView
+                        style={[
+                          styles.recommendFriendsScroll,
+                          { maxHeight: Math.min(windowHeight * 0.4, 180) },
+                        ]}
+                        keyboardShouldPersistTaps="handled"
+                        keyboardDismissMode="on-drag"
+                        nestedScrollEnabled
+                        showsVerticalScrollIndicator>
+                        {friendsList.map((friend) => {
+                          const isSelected = selectedFriendIds.has(friend.id);
+                          return (
+                            <TouchableOpacity
+                              key={friend.id}
+                              style={[
+                                styles.recommendFriendRow,
+                                isSelected && styles.recommendFriendRowSelected,
+                              ]}
+                              onPress={() => toggleFriendSelected(friend.id)}
+                              activeOpacity={0.7}>
+                              <View
+                                style={[
+                                  styles.recommendCheckbox,
+                                  isSelected && styles.recommendCheckboxSelected,
+                                ]}>
+                                {isSelected && (
+                                  <ThemedText style={styles.recommendCheckmark}>✓</ThemedText>
+                                )}
+                              </View>
+                              <ThemedText style={styles.recommendFriendName} numberOfLines={1}>
+                                {friend.display_name || 'Friend'}
+                              </ThemedText>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </ScrollView>
+                    </>
                   )}
-                </TouchableOpacity>
-              </ScrollView>
+                </View>
+                <View style={styles.recommendComposer}>
+                  <Pressable onPress={Keyboard.dismiss}>
+                    <ThemedText style={[styles.recommendModalLabel, styles.recommendMessageLabel]}>
+                      Add a short message (optional)
+                    </ThemedText>
+                  </Pressable>
+                  <TextInput
+                    style={[
+                      styles.recommendMessageInput,
+                      {
+                        backgroundColor: recommendInputBg,
+                        borderColor: recommendInputBorder,
+                        color: recommendInputText,
+                      },
+                    ]}
+                    placeholder="e.g. You'll love this one!"
+                    placeholderTextColor="#888"
+                    value={recommendMessage}
+                    onChangeText={setRecommendMessage}
+                    multiline
+                    maxLength={300}
+                    editable={!recommendSending}
+                    inputAccessoryViewID={
+                      Platform.OS === 'ios' ? RECOMMEND_MESSAGE_INPUT_ACCESSORY : undefined
+                    }
+                  />
+                  <Pressable onPress={Keyboard.dismiss}>
+                    <ThemedText style={styles.recommendMessageHint}>{recommendMessage.length}/300</ThemedText>
+                  </Pressable>
+                  <TouchableOpacity
+                    style={[
+                      styles.recommendSendButton,
+                      (selectedFriendIds.size === 0 || recommendSending) && styles.recommendSendButtonDisabled,
+                    ]}
+                    onPress={handleSendRecommendations}
+                    disabled={selectedFriendIds.size === 0 || recommendSending}>
+                    {recommendSending ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <ThemedText style={styles.recommendSendButtonText}>
+                        Send to {selectedFriendIds.size} friend{selectedFriendIds.size === 1 ? '' : 's'}
+                      </ThemedText>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </>
             )}
           </ThemedView>
         </View>
@@ -1001,9 +1107,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   recommendModalInner: {
-    flex: 1,
-    paddingBottom: 24,
-    minHeight: 280,
+    width: '100%',
   },
   recommendModalHeader: {
     flexDirection: 'row',
@@ -1015,22 +1119,47 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(0,0,0,0.08)',
   },
+  recommendModalTitlePress: {
+    flex: 1,
+    paddingRight: 8,
+  },
   recommendModalTitle: {
     fontSize: 20,
-    flex: 1,
+  },
+  recommendInputAccessory: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(0,0,0,0.25)',
+    backgroundColor: 'rgba(245,245,247,0.98)',
+  },
+  recommendInputAccessoryDoneBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+  },
+  recommendInputAccessoryDoneText: {
+    fontSize: 17,
+    fontWeight: '600',
+    color: '#c41010',
   },
   modalDoneText: {
     fontSize: 16,
     fontWeight: '600',
     color: '#c41010',
   },
-  recommendModalScroll: {
-    flex: 1,
-  },
-  recommendModalBody: {
+  recommendTopBlock: {
     paddingHorizontal: 20,
     paddingTop: 12,
-    paddingBottom: 24,
+    paddingBottom: 8,
+  },
+  recommendFriendsScroll: {
+    marginTop: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.08)',
   },
   recommendItemTitle: {
     fontSize: 17,
@@ -1043,8 +1172,15 @@ const styles = StyleSheet.create({
     marginTop: 16,
     marginBottom: 6,
   },
+  recommendComposer: {
+    paddingHorizontal: 20,
+    paddingTop: 14,
+    marginTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(0,0,0,0.08)',
+  },
   recommendMessageLabel: {
-    marginTop: 20,
+    marginTop: 0,
   },
   recommendFriendsLoader: {
     marginVertical: 16,
@@ -1067,9 +1203,6 @@ const styles = StyleSheet.create({
   recommendSelectAllText: {
     fontSize: 16,
     fontWeight: '600',
-  },
-  recommendFriendList: {
-    marginBottom: 8,
   },
   recommendFriendRow: {
     flexDirection: 'row',
